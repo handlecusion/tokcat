@@ -1,0 +1,30 @@
+# Tokcat
+
+> Tokcat is a native macOS menu-bar app that visualizes your AI coding token usage — Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid — as a 2D or 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon, macOS 11+. MIT licensed.
+
+## Install
+
+- [Homebrew](https://github.com/handlecusion/tokcat#quick-start): `brew tap handlecusion/tokcat && brew install --cask tokcat`
+- [DMG download](https://github.com/handlecusion/tokcat/releases/latest)
+- [Homebrew tap repository](https://github.com/handlecusion/homebrew-tokcat)
+
+## Documentation
+
+- [README (English)](https://github.com/handlecusion/tokcat/blob/main/README.md)
+- [README (Korean)](https://github.com/handlecusion/tokcat/blob/main/README.ko-KR.md)
+- [Landing page](https://handlecusion.github.io/tokcat/)
+- [Releases](https://github.com/handlecusion/tokcat/releases)
+
+## Architecture
+
+- [Tauri shell source](https://github.com/handlecusion/tokcat/tree/main/src-tauri): Rust backend, native tray, animation frames
+- [Frontend source](https://github.com/handlecusion/tokcat/tree/main/src): React + Vite, react-three-fiber 3D graph
+- [tokscale upstream](https://github.com/junhoyeo/tokscale): the CLI Tokcat depends on for all token/cost data
+
+## Supported AI clients
+
+Whatever `tokscale` discovers locally: Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid.
+
+## Privacy
+
+No telemetry. No cloud sync. No account. The only network request is the GitHub Releases updater manifest checked every 30 minutes. Token data is read locally from session logs.

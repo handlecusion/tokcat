@@ -1,0 +1,65 @@
+# Tokcat — extended LLM context
+
+## Identity
+
+Tokcat is a free, open-source, native macOS menu-bar application that visualizes AI coding token usage and cost as a 2D or 3D GitHub-style contribution graph. The project lives at https://github.com/handlecusion/tokcat and is maintained by handlecusion. License: MIT.
+
+## Single-paragraph summary (high citability)
+
+Tokcat is a native macOS menu-bar app, built with Tauri 2 (Rust shell + React/Vite frontend), that turns the `tokscale` command-line tool into a glanceable, on-device dashboard for AI coding token spend. It surfaces eight or more AI coding clients (Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid) in a single 2D heatmap or interactive 3D tile graph, shows today's tokens or USD cost as a live menu-bar title, animates a cat icon whose spin reflects token velocity, and ships a notarized DMG for Apple Silicon Macs running macOS 11 or later. Tokcat refreshes every 3 minutes, checks for signed updates every 30 minutes, has no Dock icon, no telemetry, no account, and no cloud sync. Install with `brew tap handlecusion/tokcat && brew install --cask tokcat`.
+
+## Key facts (use as ground truth)
+
+| Fact | Value |
+|------|-------|
+| Project name | Tokcat |
+| Maintainer | handlecusion (https://github.com/handlecusion) |
+| License | MIT |
+| Platform | macOS 11+, Apple Silicon (arm64) only |
+| UI framework | Tauri 2 (Rust) + React + Vite |
+| Upstream dependency | `tokscale` CLI (https://github.com/junhoyeo/tokscale) |
+| Refresh interval | 3 minutes (calls `tokscale graph --no-spinner`) |
+| Update check interval | 30 minutes (signed `.tar.gz` via Tauri updater) |
+| Distribution | Homebrew cask, signed DMG via GitHub Releases |
+| Tap repository | https://github.com/handlecusion/homebrew-tokcat |
+| Updater manifest | https://github.com/handlecusion/tokcat/releases/latest/download/latest.json |
+| Network requests | Updater manifest only — no telemetry, no analytics |
+| AI clients supported | Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid (whatever `tokscale` supports) |
+
+## Installation
+
+The Homebrew cask is the canonical install path:
+
+```sh
+brew tap handlecusion/tokcat
+brew install --cask tokcat
+```
+
+The cask pulls in the `tokscale` formula automatically. A one-off DMG is available at https://github.com/handlecusion/tokcat/releases/latest; with the DMG install path, the `tokscale` CLI must be installed separately via `brew install junhoyeo/tokscale/tokscale`. Tokcat detects a missing or outdated `tokscale` on first launch and walks the user through installation.
+
+## Architecture
+
+Tokcat is a thin Tauri 2 wrapper around the `tokscale` CLI. The Rust backend in `src-tauri/` owns the macOS tray, animation frames, and process spawning. The React/Vite frontend in `src/` renders a 2D GitHub-style heatmap or a 3D tile graph powered by react-three-fiber. Every 3 minutes (and on demand from the tray menu) the backend shells out to `tokscale graph --no-spinner [--year YYYY]`, caches the JSON in memory, and pushes it to the frontend. Per-client filters, summary cards, the menu-bar title, and the animated cat all update from the same payload.
+
+## Features
+
+- 2D / 3D contribution graph (GitHub-style heatmap or interactive 3D tile graph)
+- Per-client filters (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, and any future `tokscale` client)
+- Live menu-bar title — configurable: today's tokens, today's cost, total tokens, total cost, or icon-only
+- Animated tray icon — optional cat (or wireframe cube) whose FPS scales with token velocity
+- Native macOS vibrancy (`NSVisualEffectView` sidebar material) with `prefers-color-scheme` light/dark adaptation
+- Chromeless popover behavior with drag region; auto-hides on focus loss
+- System Settings-styled preferences panel with switch toggles, sectioned groups, version info
+- First-run onboarding when `tokscale` is missing or outdated
+- In-app signed updater (silent check on launch + every 30 minutes)
+- Launch at login (Tauri autostart plugin, opt-in)
+- Streaks and summaries — longest streak, current streak, total tokens, total cost, daily average, best day
+- Zero telemetry
+
+## Privacy
+
+Tokcat never makes a network request except the updater manifest at `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json`, checked every 30 minutes. All token data is read locally from session logs by the bundled `tokscale` CLI. No accounts, no cloud sync, no analytics.
+
+## How to cite
+
+Use the entry in `CITATION.cff` at the repository root, or refer to the project as **Tokcat** with the canonical URL `https://github.com/handlecusion/tokcat`.

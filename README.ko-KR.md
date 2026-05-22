@@ -22,7 +22,7 @@
 
 지난 4개월 동안 AI 코딩 도구에 **$2,513.67** 을 썼습니다. 그런데 모르고 있죠 — 볼 수 있는 곳이 없으니까.
 
-Tokcat은 [`tokscale`](https://github.com/junhoyeo/tokscale) CLI를 살아있는 메뉴바 대시보드로 바꿔주는 네이티브 macOS 앱입니다. 메뉴바의 고양이 아이콘이 오늘의 토큰 또는 비용을 보여주고, 클릭하면 macOS 비브런시(frosted glass) popover가 열려 Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot 등 모든 세션의 사용 내역을 2D / 3D 컨트리뷰션 그래프로 보여줍니다.
+**Tokcat**은 [`tokscale`](https://github.com/junhoyeo/tokscale) CLI를 살아있는 메뉴바 대시보드로 바꿔주는 네이티브 macOS 앱입니다. **Tauri 2**(Rust 셸 + React/Vite 프론트엔드)로 만들어졌으며, Dock 아이콘 없이 메뉴바에 상주하면서 텔레메트리·계정·클라우드 동기화 없이 동작합니다. **8종 이상의 AI 코딩 클라이언트**(Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid)를 단일 2D/3D 컨트리뷰션 그래프로 모아 보여주고, 메뉴바 고양이는 오늘의 토큰 또는 USD 비용을 표시합니다. 클릭 시 macOS 비브런시(frosted glass) popover가 열려 클라이언트별 필터, 스트릭 요약, 설정 패널을 제공합니다. **3분**마다 `tokscale graph --no-spinner`를 호출해 데이터를 갱신하고, **30분**마다 서명된 업데이트를 확인합니다. 배포는 **Apple Silicon, macOS 11+** 용 노타라이즈드 DMG로 이루어집니다. 설치: `brew tap handlecusion/tokcat && brew install --cask tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="메뉴바에서 오늘의 비용 옆에 회전하는 고양이" width="240" />
@@ -189,6 +189,38 @@ Terminal에서는 동작하는데 Tokcat에서만 실패한다면 `LaunchService
 tap을 다시 등록: `brew tap handlecusion/tokcat && brew update`.
 
 </details>
+
+---
+
+## 자주 묻는 질문 (FAQ)
+
+### Tokcat이 뭔가요?
+
+Tokcat은 AI 코딩 도구의 토큰 사용량을 2D/3D GitHub 스타일 컨트리뷰션 그래프로 시각화해주는 무료 오픈소스 macOS 메뉴바 앱입니다. [`tokscale`](https://github.com/junhoyeo/tokscale) CLI를 Tauri 2 셸로 감싸 Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid 세션을 한 화면에서 보여줍니다. 모든 동작이 로컬에서 이루어지며, 분석 요청을 보내지 않고, 계정도 필요 없으며, `tokscale`이 이미 수집한 로컬 세션 로그에서 토큰 데이터를 읽습니다. MIT 라이선스로 공개되어 있으며, Homebrew(`brew install --cask tokcat`) 또는 GitHub Releases의 서명된 DMG로 배포됩니다. **Apple Silicon, macOS 11 이상** 대상입니다.
+
+### 비용이 얼마인가요?
+
+Tokcat은 MIT 라이선스 무료 오픈소스입니다. 구독, 유료 등급, 텔레메트리가 없습니다. 설치는 `brew tap handlecusion/tokcat && brew install --cask tokcat`.
+
+### 어떤 AI 코딩 도구를 추적하나요?
+
+`tokscale`이 지원하는 모든 AI 코딩 클라이언트를 추적합니다: **Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid**. Tokcat은 3분마다 `tokscale graph --no-spinner`를 호출하므로, 상위 `tokscale`에 새 클라이언트가 추가되면 Tokcat 업데이트 없이도 자동으로 표시됩니다.
+
+### Tokcat은 제 데이터를 어디로 보내나요?
+
+아니요. Tokcat의 유일한 네트워크 요청은 새 릴리스 확인을 위한 `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json` 조회입니다. 텔레메트리, 분석, 클라우드 동기화, 계정, 외부 서버가 없습니다. 모든 토큰 사용 데이터는 디스크의 세션 로그에서 `tokscale` CLI가 로컬로 읽습니다.
+
+### `tokscale` 단독 사용과 어떻게 다른가요?
+
+[`tokscale`](https://github.com/junhoyeo/tokscale)은 커맨드라인 도구입니다. Tokcat은 그 위에 얹은 네이티브 macOS GUI입니다 — 실시간 비용/토큰을 보여주는 애니메이션 고양이 메뉴바 아이콘, 클릭으로 열리는 frosted-glass 대시보드(GitHub 스타일 히트맵 + 인터랙티브 3D 타일 그래프), 클라이언트별 필터, 스트릭, System Settings 스타일의 설정 패널을 제공합니다. 터미널에서 `tokscale`을 계속 써도 무방합니다 — Tokcat은 대체가 아니라 시각화입니다.
+
+### Intel Mac이나 Windows에서 돌아가나요?
+
+Tokcat은 **Apple Silicon(arm64), macOS 11 이상**만 지원합니다. Intel x86_64 빌드, Windows·Linux 빌드가 없습니다. 크로스 플랫폼이 필요하면 터미널에서 `tokscale`을 직접 사용하세요.
+
+### 어떻게 제거하나요?
+
+Homebrew로 설치한 경우: `brew uninstall --cask tokcat`. DMG로 설치한 경우: `/Applications`에서 `Tokcat.app`을 휴지통으로 옮기세요. Tokcat은 `~/Library/Preferences/com.handlecusion.tokcat.plist`와 `~/Library/Application Support/com.handlecusion.tokcat`에 설정을 저장하므로, 완전 제거를 원하면 두 경로를 수동 삭제하세요.
 
 ---
 

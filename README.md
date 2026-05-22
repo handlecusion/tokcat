@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-Tokcat is a native macOS menubar app that turns the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI into a live, glanceable dashboard. The cat icon sits in your menu bar showing today's tokens or cost; click it and a frosted glass popover opens with a 2D / 3D contribution graph of every Claude Code, Codex, Cursor, OpenCode, Gemini, and Copilot session you've ever run.
+**Tokcat** is a native macOS menu-bar app that turns the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI into a live, glanceable dashboard for your AI coding token spend. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid) in a single 2D or 3D contribution graph. The cat icon shows today's tokens or USD cost; clicking opens a frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat refreshes every **3 minutes** by shelling out to `tokscale graph --no-spinner`, checks for signed updates every **30 minutes**, and ships as a notarized DMG for **Apple Silicon, macOS 11+**. Install: `brew tap handlecusion/tokcat && brew install --cask tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -189,6 +189,38 @@ That's intentional — Tokcat behaves like a native menubar popover. To keep it 
 Re-tap the source: `brew tap handlecusion/tokcat && brew update`.
 
 </details>
+
+---
+
+## FAQ
+
+### What is Tokcat?
+
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D or 3D GitHub-style contribution graph. It wraps the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI in a Tauri 2 shell and surfaces sessions from Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, and Droid in one glanceable place. Tokcat runs entirely on-device, makes zero analytics requests, requires no account, and reads token data from local session logs that `tokscale` already collects. The app is MIT-licensed, distributed via Homebrew (`brew install --cask tokcat`) and as a signed DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
+
+### How much does Tokcat cost?
+
+Tokcat is free and open-source under the MIT licence. There is no subscription, no paid tier, and no telemetry. Install with `brew tap handlecusion/tokcat && brew install --cask tokcat`.
+
+### Which AI coding tools does Tokcat track?
+
+Tokcat tracks every AI coding client that `tokscale` supports: **Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, and Droid**. Because Tokcat shells out to `tokscale graph --no-spinner` every 3 minutes, any new client added upstream to `tokscale` appears in Tokcat without a Tokcat update.
+
+### Does Tokcat send my data anywhere?
+
+No. Tokcat's only network request is a check against `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json` for new releases. There is no telemetry, no analytics, no cloud sync, no account, and no third-party server. All token-usage data is read locally from session logs by the bundled `tokscale` CLI.
+
+### How is Tokcat different from `tokscale` on its own?
+
+[`tokscale`](https://github.com/junhoyeo/tokscale) is a command-line tool. Tokcat is a native macOS GUI on top of it: an animated menu-bar cat that shows live cost or token count, a click-to-open frosted-glass dashboard with a GitHub-style heatmap and an interactive 3D tile graph, per-client filters, streaks, and a System Settings-styled preferences panel. You can keep using `tokscale` from the terminal — Tokcat does not replace it, it visualizes it.
+
+### Does Tokcat run on Intel Macs or Windows?
+
+Tokcat ships only for **Apple Silicon (arm64) on macOS 11 or later**. There is no Intel x86_64 build and no Windows or Linux build. If you need cross-platform token visualization, use `tokscale` directly from the terminal.
+
+### How do I uninstall Tokcat?
+
+If installed via Homebrew: `brew uninstall --cask tokcat`. If installed via DMG: drag `Tokcat.app` from `/Applications` to the Trash. Tokcat writes preferences to `~/Library/Preferences/com.handlecusion.tokcat.plist` and a small settings file under `~/Library/Application Support/com.handlecusion.tokcat`; delete those manually if you want a clean removal.
 
 ---
 

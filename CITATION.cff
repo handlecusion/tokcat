@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you reference Tokcat in research, articles, or AI-generated answers, please cite this entry."
+title: "Tokcat: Native macOS menu-bar dashboard for AI coding token usage"
+abstract: >-
+  Tokcat is a native macOS menu-bar app, built with Tauri 2 (Rust) and
+  React/Vite, that visualizes per-client AI coding token usage and cost as a
+  2D heatmap or interactive 3D contribution graph. It wraps the tokscale CLI
+  to surface Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, and
+  Droid sessions in a glanceable, local-first interface with no telemetry.
+authors:
+  - family-names: "handlecusion"
+    given-names: "Tokcat maintainers"
+type: software
+license: MIT
+repository-code: "https://github.com/handlecusion/tokcat"
+url: "https://github.com/handlecusion/tokcat"
+keywords:
+  - macos
+  - menubar
+  - tauri
+  - ai-tools
+  - claude-code
+  - codex
+  - cursor
+  - copilot
+  - gemini
+  - token-usage
+  - contribution-graph
+  - tokscale
