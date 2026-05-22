@@ -62,6 +62,7 @@ export function ContributionGraph3D({ grid, activeLight = '#bfdbfe', activeDark 
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const controlsRef = useRef<OrbitControlsImpl | null>(null)
+  const invalidateRef = useRef<(() => void) | null>(null)
 
   const totalWidth = grid.cols * STEP
   const totalDepth = grid.rows * STEP
@@ -188,6 +189,7 @@ export function ContributionGraph3D({ grid, activeLight = '#bfdbfe', activeDark 
     cam.updateProjectionMatrix()
     ctrl.update()
     persist()
+    invalidateRef.current?.()
   }
 
   // Auto-fit on first mount when canvas size is known
@@ -214,13 +216,11 @@ export function ContributionGraph3D({ grid, activeLight = '#bfdbfe', activeDark 
     <div className="graph-3d-wrap" ref={wrapRef}>
       <Canvas
         dpr={[1, 2]}
+        frameloop="demand"
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
         style={{ width: '100%', height: '100%' }}
-        onCreated={({ gl, scene, camera }) => {
-          const id = setInterval(() => {
-            try { gl.render(scene as any, camera as any) } catch {}
-          }, 250)
-          ;(gl as any).__pumpId = id
+        onCreated={(state) => {
+          invalidateRef.current = state.invalidate
         }}
       >
         <OrthographicCamera
@@ -242,7 +242,7 @@ export function ContributionGraph3D({ grid, activeLight = '#bfdbfe', activeDark 
           zoomSpeed={1.0}
           minZoom={1}
           maxZoom={80}
-          onChange={persist}
+          onChange={() => { invalidateRef.current?.(); persist() }}
         />
         <ambientLight intensity={0.7} />
         <directionalLight position={[20, 30, 15]} intensity={0.8} />

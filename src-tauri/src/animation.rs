@@ -28,10 +28,10 @@ fn frame_count(style: u32) -> usize {
 fn level_to_fps(level: u8) -> u64 {
     match level {
         0 => 0,
-        1 => 4,
-        2 => 8,
-        3 => 15,
-        _ => 25,
+        1 => 2,
+        2 => 3,
+        3 => 5,
+        _ => 8,
     }
 }
 
@@ -52,7 +52,7 @@ pub fn spawn_animation_loop<R: Runtime>(app: AppHandle<R>, state: Arc<AppState>)
                     swap_tray_icon(&app, static_icon());
                     last_kind = 0;
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(2000)).await;
                 continue;
             }
             let style = state.animation_style();
@@ -69,7 +69,7 @@ pub fn spawn_animation_loop<R: Runtime>(app: AppHandle<R>, state: Arc<AppState>)
                     frame_idx = 0;
                     last_kind = 1;
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(2000)).await;
                 continue;
             }
             last_kind = 2;
