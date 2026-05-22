@@ -22,6 +22,9 @@ pub struct AppState {
     // blur-to-hide window handler doesn't dismiss the menubar window when the
     // dialog steals focus.
     suppress_blur_hide: AtomicU32,
+    // Set while a refresh fetch is in flight. The bounce loop reads this to
+    // start the up/down animation on the tray cat.
+    refreshing: AtomicBool,
     tailer: Arc<UsageTailer>,
 }
 
@@ -32,6 +35,7 @@ impl AppState {
             animate_enabled: AtomicBool::new(true),
             animation_style: AtomicU32::new(2),
             suppress_blur_hide: AtomicU32::new(0),
+            refreshing: AtomicBool::new(false),
             tailer: Arc::new(UsageTailer::new()),
         })
     }
@@ -65,6 +69,14 @@ impl AppState {
 
     pub fn should_suppress_blur_hide(&self) -> bool {
         self.suppress_blur_hide.load(Ordering::SeqCst) > 0
+    }
+
+    pub fn set_refreshing(&self, v: bool) {
+        self.refreshing.store(v, Ordering::SeqCst);
+    }
+
+    pub fn is_refreshing(&self) -> bool {
+        self.refreshing.load(Ordering::SeqCst)
     }
 
     pub fn set_animation_style(&self, style: u32) {

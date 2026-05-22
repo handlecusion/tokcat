@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
 }
 
 export const ANIMATION_STYLE_LABELS: Record<AnimationStyle, string> = {
-  cat: 'Running cat',
+  cat: 'Spinning cat',
   parrot: 'Party parrot',
 }
 

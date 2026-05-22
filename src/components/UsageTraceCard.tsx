@@ -34,7 +34,7 @@ export function UsageTraceCard({ buckets, windowSecs }: Props) {
       ) : (
         <div className="trace-rows">
           {top.map(b => {
-            const pct = max > 0 ? Math.max(2, (b.tokens_per_min / max) * 100) : 0
+            const pct = max > 0 ? Math.max(4, (b.tokens_per_min / max) * 100) : 0
             return (
               <div className="trace-row" key={`${b.client}|${b.agent}|${b.model}`}>
                 <div className="trace-row-meta">

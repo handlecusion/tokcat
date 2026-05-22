@@ -57,6 +57,11 @@ struct NativeState {
     // Skip the layer.contents write when the loop emits the same (style, idx)
     // twice in a row (level transitions can do this).
     last_set: parking_lot::Mutex<(u32, usize)>,
+    // Base layer geometry. Kept here so set_y_offset can rebuild the
+    // frame without re-querying the button bounds on every tick.
+    icon_pt: CGFloat,
+    base_x: CGFloat,
+    base_y: CGFloat,
 }
 
 unsafe impl Send for NativeState {}
@@ -114,20 +119,19 @@ pub fn init() -> Result<(), &'static str> {
         }
     };
 
+    // Pin to the left edge of the button at the image-rect size. The
+    // button's bounds expand horizontally with the title; we don't want
+    // the sublayer to stretch with it.
+    // Shift horizontally so the cat sits against the title text instead
+    // of leaving AppKit's default image↔title padding visible.
+    const ICON_X_OFFSET: CGFloat = 8.0;
+    let bh = button.bounds().size.height;
+    let base_y = ((bh - icon_pt) / 2.0).max(0.0);
+
     let anim_layer = unsafe { CALayer::new() };
     unsafe {
-        // Pin to the left edge of the button at the image-rect size. The
-        // button's bounds expand horizontally with the title; we don't want
-        // the sublayer to stretch with it.
-        // Vertically center the cat in the menubar's button area; shift
-        // horizontally to the right by ICON_X_OFFSET so the rendered cat sits
-        // against the title text instead of leaving AppKit's default
-        // image↔title padding visible between them.
-        const ICON_X_OFFSET: CGFloat = 8.0;
-        let bh = button.bounds().size.height;
-        let y = ((bh - icon_pt) / 2.0).max(0.0);
         anim_layer.setFrame(CGRect::new(
-            CGPoint::new(ICON_X_OFFSET, y),
+            CGPoint::new(ICON_X_OFFSET, base_y),
             CGSize::new(icon_pt, icon_pt),
         ));
         anim_layer.setContentsScale(2.0 as CGFloat);
@@ -143,6 +147,9 @@ pub fn init() -> Result<(), &'static str> {
         frames_cat,
         frames_parrot,
         last_set: parking_lot::Mutex::new((u32::MAX, usize::MAX)),
+        icon_pt,
+        base_x: ICON_X_OFFSET,
+        base_y,
     });
 
     // Tell the vendored tray-icon crate to stop calling setImage on our
@@ -232,6 +239,22 @@ unsafe fn find_our_status_item() -> Option<usize> {
     // valid even if Tauri ever drops its strong reference.
     let _: *mut AnyObject = msg_send![ptr as *mut AnyObject, retain];
     Some(ptr as usize)
+}
+
+/// Shift the animation layer's origin.y by `dy` (positive = up). Used by
+/// the refresh bounce: caller drives a sin wave and we just push the
+/// layer up/down each tick.
+pub fn set_y_offset<R: Runtime>(app: &AppHandle<R>, dy: f64) {
+    let Some(state) = STATE.get() else {
+        return;
+    };
+    let _ = app.run_on_main_thread(move || unsafe {
+        let layer = &*(state.anim_layer_ptr as *const CALayer);
+        layer.setFrame(CGRect::new(
+            CGPoint::new(state.base_x, state.base_y + dy as CGFloat),
+            CGSize::new(state.icon_pt, state.icon_pt),
+        ));
+    });
 }
 
 pub fn set_frame<R: Runtime>(app: &AppHandle<R>, style: u32, idx: usize) {

@@ -65,6 +65,13 @@ pub fn spawn_animation_loop<R: Runtime>(app: AppHandle<R>, state: Arc<AppState>)
                 tokio::time::sleep(Duration::from_millis(2000)).await;
                 continue;
             }
+            // Freeze the spin while a refresh is in flight; the bounce loop
+            // takes over and bobs the icon up and down.
+            if state.is_refreshing() {
+                swap_tray_icon(&app, style, 0);
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                continue;
+            }
             let interval = load_to_interval_ms(state.current_load());
             swap_tray_icon(&app, style, frame_idx);
             frame_idx = (frame_idx + 1) % frame_count(style);

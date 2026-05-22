@@ -64,6 +64,21 @@ async fn refresh_graph(
     state: tauri::State<'_, Arc<AppState>>,
     app: tauri::AppHandle,
 ) -> Result<GraphPayload, String> {
+    // Flip the bounce flag for the whole refresh duration so the tray cat
+    // hops up and down while we're fetching. Cleared in the guard below
+    // even if tokscale errors out.
+    state.set_refreshing(true);
+    struct RefreshGuard<'a> {
+        state: &'a Arc<AppState>,
+    }
+    impl<'a> Drop for RefreshGuard<'a> {
+        fn drop(&mut self) {
+            self.state.set_refreshing(false);
+        }
+    }
+    let state_inner: &Arc<AppState> = &*state;
+    let _guard = RefreshGuard { state: state_inner };
+
     let year_clone = year.clone();
     let data = async_runtime::spawn_blocking(move || tokscale::run(&year_clone))
         .await
@@ -85,6 +100,11 @@ async fn refresh_graph(
         trace: state.usage_trace(600),
     };
     let _ = app.emit("rate-update", &rate_payload);
+
+    // Guarantee a visible bounce even on cache-warm fetches that return in
+    // under a frame; ~450ms gives roughly one full bob at the bounce_loop
+    // frequency. Bounded so a hung tokscale doesn't extend it further.
+    tokio::time::sleep(Duration::from_millis(450)).await;
 
     Ok(payload)
 }
@@ -148,6 +168,12 @@ fn set_popover_height(height: f64, window: tauri::Window) -> Result<(), String> 
         .map_err(|e| format!("outer_size: {}", e))?;
     let scale = window.scale_factor().unwrap_or(1.0);
     let logical_w = (current.width as f64) / scale;
+    let logical_h = (current.height as f64) / scale;
+    // Idempotent: skip set_size for tiny diffs so a ResizeObserver storm
+    // doesn't fight itself (each set_size triggers another observe → invoke).
+    if (logical_h - h).abs() < 2.0 {
+        return Ok(());
+    }
     window
         .set_size(tauri::LogicalSize::new(logical_w, h))
         .map_err(|e| format!("set_size: {}", e))?;
@@ -180,6 +206,34 @@ fn spawn_refresh_loop(app: tauri::AppHandle, state: Arc<AppState>) {
                         let _ = tray::refresh_tray_title(&app, &payload, &window);
                     }
                 }
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_bounce_loop(app: tauri::AppHandle, state: Arc<AppState>) {
+    async_runtime::spawn(async move {
+        // ~30 fps tick. The bounce uses a half-sine wave so the icon goes
+        // up, comes back down, then up again — period 420ms, amplitude 5px.
+        const PERIOD_MS: f64 = 420.0;
+        const AMPLITUDE_PX: f64 = 5.0;
+        let start = std::time::Instant::now();
+        let mut last_was_bouncing = false;
+        loop {
+            tokio::time::sleep(Duration::from_millis(33)).await;
+            if state.is_refreshing() {
+                let t = start.elapsed().as_millis() as f64;
+                let phase = (t % PERIOD_MS) / PERIOD_MS * std::f64::consts::PI;
+                // NSStatusBarButton's backing layer is flipped (origin at
+                // top), so a positive dy moves the icon down. Negate so the
+                // bounce visually goes up like a real hop.
+                let dy = -phase.sin() * AMPLITUDE_PX;
+                native_tray::set_y_offset(&app, dy);
+                last_was_bouncing = true;
+            } else if last_was_bouncing {
+                native_tray::set_y_offset(&app, 0.0);
+                last_was_bouncing = false;
             }
         }
     });
@@ -281,6 +335,8 @@ pub fn run() {
         spawn_refresh_loop(handle.clone(), state_clone.clone());
         spawn_usage_tail_loop(handle.clone(), state_clone.clone());
         animation::spawn_animation_loop(handle.clone(), state_clone.clone());
+        #[cfg(target_os = "macos")]
+        spawn_bounce_loop(handle.clone(), state_clone.clone());
         Ok(())
     });
 

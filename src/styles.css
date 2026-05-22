@@ -811,8 +811,10 @@ html, body, #root {
 }
 .trace-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 80px auto;
-  gap: 8px;
+  /* Fixed bar track + fixed value column so each row's bar starts at the
+     same x and the K/m/M/m values right-align under each other. */
+  grid-template-columns: minmax(0, 1fr) 120px 70px;
+  gap: 10px;
   align-items: center;
 }
 .trace-row-meta {
