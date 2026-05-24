@@ -38,7 +38,7 @@ use objc2_core_graphics::{
     CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
 };
 use objc2_foundation::{MainThreadMarker, NSString};
-use objc2_quartz_core::{kCAGravityCenter, CALayer};
+use objc2_quartz_core::{kCAGravityCenter, CALayer, CATransaction};
 use tauri::{AppHandle, Runtime};
 
 mod frames {
@@ -129,7 +129,7 @@ pub fn init() -> Result<(), &'static str> {
     let base_y = ((bh - icon_pt) / 2.0).max(0.0);
 
     let anim_layer = unsafe { CALayer::new() };
-    unsafe {
+    without_implicit_layer_actions(|| unsafe {
         anim_layer.setFrame(CGRect::new(
             CGPoint::new(ICON_X_OFFSET, base_y),
             CGSize::new(icon_pt, icon_pt),
@@ -137,7 +137,7 @@ pub fn init() -> Result<(), &'static str> {
         anim_layer.setContentsScale(2.0 as CGFloat);
         anim_layer.setContentsGravity(kCAGravityCenter);
         button_layer.insertSublayer_atIndex(&anim_layer, 0);
-    }
+    });
 
     let frames_cat = pre_decode(ANIM_CAT2_LEN, anim_cat2_rgba);
     let frames_parrot = pre_decode(ANIM_PARROT_LEN, anim_parrot_rgba);
@@ -250,10 +250,12 @@ pub fn set_y_offset<R: Runtime>(app: &AppHandle<R>, dy: f64) {
     };
     let _ = app.run_on_main_thread(move || unsafe {
         let layer = &*(state.anim_layer_ptr as *const CALayer);
-        layer.setFrame(CGRect::new(
-            CGPoint::new(state.base_x, state.base_y + dy as CGFloat),
-            CGSize::new(state.icon_pt, state.icon_pt),
-        ));
+        without_implicit_layer_actions(|| {
+            layer.setFrame(CGRect::new(
+                CGPoint::new(state.base_x, state.base_y + dy as CGFloat),
+                CGSize::new(state.icon_pt, state.icon_pt),
+            ));
+        });
     });
 }
 
@@ -285,6 +287,15 @@ fn apply_frame(state: &'static NativeState, style: u32, idx: usize) {
     unsafe {
         let layer = &*(state.anim_layer_ptr as *const CALayer);
         let cgimg_ptr = frames[idx] as *const AnyObject;
-        layer.setContents(Some(&*cgimg_ptr));
+        without_implicit_layer_actions(|| {
+            layer.setContents(Some(&*cgimg_ptr));
+        });
     }
+}
+
+fn without_implicit_layer_actions(f: impl FnOnce()) {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    f();
+    CATransaction::commit();
 }
