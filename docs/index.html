@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Tokcat — Native macOS Menu-Bar Dashboard for AI Coding Token Usage</title>
-  <meta name="description" content="Tokcat is a free, open-source macOS menu-bar app that visualizes your AI coding token usage (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid) as a 2D or 3D GitHub-style contribution graph. Built with Tauri 2. MIT licensed. Apple Silicon, macOS 11+." />
+  <title>Tokcat — AI Token Usage Monitor for the macOS Menu Bar</title>
+  <meta name="description" content="Tokcat is a free, open-source AI token usage monitor for the macOS menu bar: track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM cost tracker data as a 2D or 3D GitHub-style contribution graph." />
   <link rel="canonical" href="https://handlecusion.github.io/tokcat/" />
   <meta name="robots" content="index,follow,max-image-preview:large" />
   <meta name="author" content="handlecusion" />
-  <meta name="keywords" content="tokcat, AI token usage, Claude Code, OpenAI Codex, Cursor, OpenCode, Gemini, GitHub Copilot, Amp, Droid, Hermes, macOS menu bar app, Tauri 2, token cost tracker, AI coding spend" />
+  <meta name="keywords" content="tokcat, AI token usage monitor, AI token usage, macOS menu bar, macOS menu bar app, Claude Code usage, Claude Code usage tracker, OpenAI Codex usage, Codex usage, Codex usage tracker, Cursor usage, Cursor usage tracker, LLM cost tracker, token cost tracker, AI coding agent usage, AI coding spend, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Tauri 2" />
 
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Tokcat" />
-  <meta property="og:title" content="Tokcat — Native macOS Menu-Bar Dashboard for AI Coding Token Usage" />
-  <meta property="og:description" content="Visualize your Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, and Droid token spend as a 2D or 3D contribution graph in the macOS menu bar. Free, open-source, no telemetry." />
+  <meta property="og:title" content="Tokcat — AI Token Usage Monitor for macOS" />
+  <meta property="og:description" content="Track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM costs from the macOS menu bar. Free, open-source, no telemetry." />
   <meta property="og:url" content="https://handlecusion.github.io/tokcat/" />
   <meta property="og:image" content="https://opengraph.githubassets.com/1/handlecusion/tokcat" />
 
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Tokcat — macOS menu-bar dashboard for AI coding token usage" />
-  <meta name="twitter:description" content="Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, Amp, Droid — one menu-bar cat, one contribution graph." />
+  <meta name="twitter:title" content="Tokcat — AI token usage monitor for macOS" />
+  <meta name="twitter:description" content="Claude Code usage, Codex usage, Cursor usage, and LLM cost tracker data — one macOS menu-bar cat, one contribution graph." />
   <meta name="twitter:image" content="https://opengraph.githubassets.com/1/handlecusion/tokcat" />
 
   <link rel="alternate" type="text/plain" title="llms.txt" href="https://raw.githubusercontent.com/handlecusion/tokcat/main/llms.txt" />
@@ -34,7 +34,14 @@
         "@type": "SoftwareApplication",
         "@id": "https://github.com/handlecusion/tokcat#software",
         "name": "Tokcat",
-        "alternateName": ["Tokcat menubar app"],
+        "alternateName": [
+          "Tokcat menubar app",
+          "AI token usage monitor",
+          "Claude Code usage tracker",
+          "Codex usage tracker",
+          "Cursor usage tracker",
+          "LLM cost tracker"
+        ],
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "Menu bar utility",
         "operatingSystem": "macOS 11+ (Apple Silicon arm64)",
@@ -47,8 +54,13 @@
         "installUrl": "https://github.com/handlecusion/tokcat#quick-start",
         "softwareHelp": "https://github.com/handlecusion/tokcat/blob/main/README.md",
         "license": "https://opensource.org/licenses/MIT",
-        "description": "Native macOS menu-bar app that visualizes AI coding token usage (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes) as a 2D or 3D GitHub-style contribution graph. Reads local usage logs in a Tauri 2 shell.",
+        "description": "AI token usage monitor for the macOS menu bar. Tokcat tracks Claude Code usage, Codex usage, Cursor usage, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM cost tracker data as a 2D or 3D GitHub-style contribution graph. Reads local usage logs in a Tauri 2 shell.",
         "featureList": [
+          "AI token usage monitor for macOS",
+          "Claude Code usage tracker",
+          "Codex usage tracker",
+          "Cursor usage tracker",
+          "LLM cost tracker for AI coding agent usage",
           "2D and 3D contribution graph",
           "Per-AI-client filters (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes)",
           "Animated menu-bar cat icon reflecting token velocity",
@@ -164,7 +176,7 @@
 </head>
 <body>
   <h1>Tokcat</h1>
-  <p><strong>Your AI coding token usage, alive in the macOS menu bar.</strong></p>
+  <p><strong>AI token usage monitor for the macOS menu bar.</strong></p>
   <p>
     <span class="pill">macOS 11+</span>
     <span class="pill">Apple Silicon</span>
@@ -174,8 +186,8 @@
   </p>
 
   <p>
-    Tokcat is a native macOS menu-bar app, built with <strong>Tauri 2</strong> (Rust + React/Vite),
-    that visualizes your AI coding token spend across <strong>Claude Code, OpenAI Codex, Cursor,
+    Tokcat is an <strong>AI token usage monitor</strong> and <strong>LLM cost tracker</strong> for the macOS menu bar,
+    built with <strong>Tauri 2</strong> (Rust + React/Vite). It tracks <strong>Claude Code usage, OpenAI Codex usage, Cursor usage,
     OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, and Hermes</strong> as a 2D or 3D GitHub-style
     contribution graph. The animated cat icon shows today's tokens or USD cost; clicking opens a
     frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat

@@ -10,6 +10,7 @@
     "dev": "node server.js",
     "dev:vite": "node server.js",
     "build": "vite build",
+    "check:seo": "python3 scripts/check_seo.py",
     "preview": "vite preview --port 4061",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
