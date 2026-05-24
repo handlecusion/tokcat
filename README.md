@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes) in a single 2D or 3D contribution graph. The cat icon shows today's tokens or USD cost; clicking opens a frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as a notarized DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
+**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes) in a single 2D or 3D contribution graph. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, or icon-only mode; clicking opens a frosted-glass popover with per-client filters, Live trace, streak summaries, and a settings panel. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as a signed DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -67,7 +67,7 @@ Tokcat is built for the category searches people actually type when AI coding bi
 
 | | |
 |---|---|
-| **Glanceable** | The menu bar title is configurable: today's tokens, today's cost, total tokens, total cost, or icon-only. |
+| **Glanceable** | The menu bar title is configurable: today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. |
 | **Native** | Tauri 2 shell with macOS `NSVisualEffectView` vibrancy, system fonts, and `prefers-color-scheme` light/dark adaptation. |
 | **Quiet** | Lives in the menu bar — no Dock icon, no spurious notifications, auto-hides when you click another app. |
 | **Honest** | Numbers come from local session logs read on-device. No telemetry, no cloud sync, no account required. |
@@ -79,6 +79,8 @@ Tokcat is built for the category searches people actually type when AI coding bi
 ## How It Works
 
 Tokcat reads local usage logs directly from the Rust backend. On demand from the tray menu, and on a steady background refresh for the popover chart, it scans supported client stores, deduplicates streaming retries, normalizes token fields, estimates cost from a bundled model-price table when the source log does not include cost, and caches the graph payload in memory.
+
+For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. The same signal can drive the menu-bar title, the Live trace card, and the adaptive tray animation.
 
 The React frontend renders that payload as a 2D heatmap or a 3D tile graph powered by react-three-fiber. Per-client filters, summary cards, and the menu bar title all update from the same local payload.
 
@@ -110,12 +112,10 @@ A native System Settings-styled panel for the menu-bar title, animated tray icon
 
 The mascot isn't decoration — it's the gauge. Tokcat's menubar cat eats whatever tokens your AI tools chew through and spins faster as it digests more. The hungrier your editor, the louder the cat. When you're idle, it dozes. When Claude Code is hammering through a refactor, it whirls. A glance at the menu bar and you know how fast your tokens are burning, without opening anything.
 
-Pick between three styles in Settings: a wireframe cube, the long-loop cat, or the short-loop cat.
+Pick between two styles in Settings: the spinning cat or a party parrot. During a manual refresh, the tray icon hops while Tokcat rebuilds the graph.
 
 <p align="center">
-  <img src="docs/screenshots/tray-anim-cat1.gif" alt="Long-loop spinning cat" width="128" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/tray-anim-cat2.gif" alt="Short-loop spinning cat" width="128" />
+  <img src="docs/screenshots/tray-anim-cat2.gif" alt="Spinning cat tray animation" width="128" />
 </p>
 
 ---
@@ -126,13 +126,14 @@ Pick between three styles in Settings: a wireframe cube, the long-loop cat, or t
 |---------|---------|
 | **2D / 3D contribution graph** | GitHub-style heatmap or interactive 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
 | **Per-client filters** | Toggle Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes, and compatible local logs. |
-| **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, or icon-only. Token-rate updates are emitted every 3 minutes. |
-| **Animated tray icon** | Optional cat (or wireframe cube) animation whose FPS scales with your real-time token velocity. |
+| **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. Token-rate updates are emitted every 3 minutes. |
+| **Animated tray icon** | Optional spinning cat or party parrot animation whose FPS scales with your real-time token velocity. Native CALayer frame swaps keep the animation smooth in the macOS menu bar. |
 | **Native vibrancy + glassmorphism** | Transparent window with macOS `sidebar` `NSVisualEffectView`; light/dark auto via `prefers-color-scheme`. |
 | **Menubar popover behavior** | Chromeless window, drag region on the header, auto-hides when focus leaves the app. |
 | **Settings panel** | macOS System Settings-styled preferences with switch toggles, sectioned groups, version info, and one-click update check. |
 | **In-app updater** | Signed releases via Tauri updater. Silent check on launch and every 30 minutes; manual check from Settings or the tray menu. |
 | **Launch at login** | Tauri autostart plugin — opt-in via Settings. |
+| **Live trace** | 10-minute tokens/min breakdown by client, with an optional split by agent and model. |
 | **Streaks & summaries** | Longest / current streak, total tokens, total cost, daily average, best day. |
 | **No telemetry** | Tokcat never makes a network request except the updater manifest. All data stays local. |
 
@@ -160,9 +161,10 @@ After installation, launch **Tokcat** from `/Applications`. Click the cat in the
 
 | Setting | Effect |
 |---|---|
-| Menubar title | What the menu-bar text shows next to the icon. |
+| Menubar title | What the menu-bar text shows next to the icon, including the live tokens/min option. |
 | Launch at login | Starts Tokcat automatically when you log in (Tauri autostart). |
-| Animate tray icon | Cat or wireframe-cube animation that reflects token velocity. |
+| Animate tray icon | Spinning cat or party parrot animation that reflects token velocity. |
+| Live trace → Split by agent / model | Expands the Live trace card from one row per client into per-agent and per-model rows. |
 | About → Version | Currently installed Tokcat version. |
 | About → Check Now | Same as the tray menu's "Check for Updates…", but in-pane. |
 | Quit Tokcat | Exits the app. |
@@ -228,7 +230,7 @@ No. Tokcat's only network request is a check against `https://github.com/handlec
 
 ### How is Tokcat different from CLI token-usage tools?
 
-Tokcat is a native macOS GUI and background reader: an animated menu-bar cat that shows live cost or token count, a click-to-open frosted-glass dashboard with a GitHub-style heatmap and an interactive 3D tile graph, per-client filters, streaks, and a System Settings-styled preferences panel. It does not require a separate token-usage CLI at runtime.
+Tokcat is a native macOS GUI and background reader: an animated menu-bar icon that shows cost, token count, or live tokens/min, a click-to-open frosted-glass dashboard with a GitHub-style heatmap, an interactive 3D tile graph, Live trace, per-client filters, streaks, and a System Settings-styled preferences panel. It does not require a separate token-usage CLI at runtime.
 
 ### Does Tokcat run on Intel Macs or Windows?
 
