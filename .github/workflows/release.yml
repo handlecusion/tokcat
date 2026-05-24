@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish DMG
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.sha.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          PKG_VER=$(node -p "require('./package.json').version")
+          CARGO_VER=$(grep -E '^version = ' src-tauri/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          TAURI_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [[ "$PKG_VER" != "$VERSION" || "$CARGO_VER" != "$VERSION" || "$TAURI_VER" != "$VERSION" ]]; then
+            echo "::error::version mismatch — tag=$VERSION package.json=$PKG_VER Cargo.toml=$CARGO_VER tauri.conf.json=$TAURI_VER"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build
+
+      - name: Strip .VolumeIcon.icns from DMG
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="src-tauri/target/release/bundle/dmg/Tokcat_${VERSION}_aarch64.dmg"
+          DMG_RW="${DMG%.dmg}.rw.dmg"
+          DMG_MNT="$(mktemp -d)"
+          hdiutil convert "$DMG" -format UDRW -o "$DMG_RW" -ov >/dev/null
+          hdiutil attach -nobrowse -mountpoint "$DMG_MNT" "$DMG_RW" >/dev/null
+          rm -f "$DMG_MNT/.VolumeIcon.icns"
+          SetFile -a c "$DMG_MNT" 2>/dev/null || true
+          hdiutil detach "$DMG_MNT" >/dev/null
+          rmdir "$DMG_MNT" 2>/dev/null || true
+          hdiutil convert "$DMG_RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" -ov >/dev/null
+          rm -f "$DMG_RW"
+
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          SIG_FILE="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz.sig"
+          LATEST_JSON="src-tauri/target/release/bundle/latest.json"
+          SIGNATURE="$(cat "$SIG_FILE")"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          DOWNLOAD_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          NOTES="$(git tag -l --format='%(contents)' "$TAG")"
+          if [[ -z "$NOTES" ]]; then
+            NOTES="Tokcat $VERSION"
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$NOTES" \
+            --arg pub_date "$PUB_DATE" \
+            --arg signature "$SIGNATURE" \
+            --arg url "$DOWNLOAD_BASE/Tokcat.app.tar.gz" \
+            '{version:$version, notes:$notes, pub_date:$pub_date, platforms:{"darwin-aarch64":{signature:$signature, url:$url}}}' \
+            > "$LATEST_JSON"
+          cat "$LATEST_JSON"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          DMG="src-tauri/target/release/bundle/dmg/Tokcat_${VERSION}_aarch64.dmg"
+          APP_TGZ="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz"
+          APP_SIG="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz.sig"
+          LATEST_JSON="src-tauri/target/release/bundle/latest.json"
+          TAG_NOTES="$(git tag -l --format='%(contents)' "$TAG")"
+          if [[ -n "$TAG_NOTES" ]]; then
+            gh release create "$TAG" \
+              "$DMG" "$APP_TGZ" "$APP_SIG" "$LATEST_JSON" \
+              --title "Tokcat $VERSION" \
+              --notes "$TAG_NOTES"
+          else
+            gh release create "$TAG" \
+              "$DMG" "$APP_TGZ" "$APP_SIG" "$LATEST_JSON" \
+              --title "Tokcat $VERSION" \
+              --generate-notes
+          fi
+
+      - name: Compute DMG sha256
+        id: sha
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="src-tauri/target/release/bundle/dmg/Tokcat_${VERSION}_aarch64.dmg"
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "DMG sha256: $SHA"
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tokcat
+        uses: actions/checkout@v4
+        with:
+          repository: handlecusion/homebrew-tokcat
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Bump cask version + sha256
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256: ${{ needs.release.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          CASK="tap/Casks/tokcat.rb"
+          if [[ ! -f "$CASK" ]]; then
+            echo "::error::cask not found at $CASK"
+            exit 1
+          fi
+          sed -i.bak -E "s|^  version \"[^\"]*\"$|  version \"${VERSION}\"|" "$CASK"
+          sed -i.bak -E "s|^  sha256 \"[^\"]*\"$|  sha256 \"${SHA256}\"|" "$CASK"
+          rm -f "${CASK}.bak"
+          echo "--- updated cask ---"
+          cat "$CASK"
+          if ! grep -q "version \"${VERSION}\"" "$CASK"; then
+            echo "::error::version not updated in cask"
+            exit 1
+          fi
+          if ! grep -q "sha256 \"${SHA256}\"" "$CASK"; then
+            echo "::error::sha256 not updated in cask"
+            exit 1
+          fi
+
+      - name: Commit & push
+        working-directory: tap
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "tokcat-release-bot"
+          git config user.email "tokcat-release-bot@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "no changes to commit"
+            exit 0
+          fi
+          git add Casks/tokcat.rb
+          git commit -m "Bump tokcat cask to ${VERSION}"
+          git push origin HEAD:main

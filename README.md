@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-**Tokcat** is a native macOS menu-bar app that turns the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI into a live, glanceable dashboard for your AI coding token spend. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid) in a single 2D or 3D contribution graph. The cat icon shows today's tokens or USD cost; clicking opens a frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat refreshes every **3 minutes** by shelling out to `tokscale graph --no-spinner`, checks for signed updates every **30 minutes**, and ships as a notarized DMG for **Apple Silicon, macOS 11+**. Install: `brew tap handlecusion/tokcat && brew install --cask tokcat`.
+**Tokcat** is a native macOS menu-bar app that turns the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI into a live, glanceable dashboard for your AI coding token spend. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid) in a single 2D or 3D contribution graph. The cat icon shows today's tokens or USD cost; clicking opens a frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat refreshes every **3 minutes** by shelling out to `tokscale graph --no-spinner`, checks for signed updates every **30 minutes**, and ships as a notarized DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -37,11 +37,10 @@ You spent **$2,513.67** on AI coding tools in the last four months. You don't kn
 ## Quick Start
 
 ```sh
-brew tap handlecusion/tokcat
-brew install --cask tokcat
+brew install --cask handlecusion/tokcat/tokcat
 ```
 
-That's it. The cask pulls in the `tokscale` formula automatically, so the CLI Tokcat depends on is installed in the same step. Open **Tokcat** from `/Applications` — the cat shows up in the menu bar, the Dock stays clean, and clicking the icon opens the dashboard.
+That's it. The fully-qualified `user/tap/cask` form auto-taps `handlecusion/homebrew-tokcat` and pulls in the `tokscale` formula in the same step, so the CLI Tokcat depends on is installed for you. Open **Tokcat** from `/Applications` — the cat shows up in the menu bar, the Dock stays clean, and clicking the icon opens the dashboard.
 
 The in-app updater checks for new releases on launch and again every 30 minutes; signed `.tar.gz` artifacts are verified against the embedded public key before install.
 
@@ -186,7 +185,26 @@ That's intentional — Tokcat behaves like a native menubar popover. To keep it 
 
 **`brew install --cask tokcat` says no formula found**
 
-Re-tap the source: `brew tap handlecusion/tokcat && brew update`.
+Use the fully-qualified name so brew knows which tap to look in: `brew install --cask handlecusion/tokcat/tokcat`. If the tap itself is stale, refresh it with `brew update`.
+
+**`Error: Cask tokcat exists in multiple taps`**
+
+Earlier versions of the tap lived at `handlecusion/tokscale`; that repo was renamed to `handlecusion/homebrew-tokcat`. If you tapped the old name once, your local Homebrew still treats it as a separate tap and collides with the new one. Drop the stale tap and reinstall:
+
+```sh
+brew untap handlecusion/tokscale
+brew install --cask handlecusion/tokcat/tokcat
+```
+
+**Downloaded DMG won't launch / "Tokcat is damaged" / immediate crash**
+
+Tokcat ships ad-hoc-signed (no paid Apple Developer ID), so a DMG-installed copy hits the Gatekeeper quarantine. The Homebrew cask runs the strip + re-sign step automatically; for the manual DMG path do it yourself:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Tokcat.app
+codesign --force --deep --sign - /Applications/Tokcat.app
+open -na /Applications/Tokcat.app
+```
 
 </details>
 
@@ -196,11 +214,11 @@ Re-tap the source: `brew tap handlecusion/tokcat && brew update`.
 
 ### What is Tokcat?
 
-Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D or 3D GitHub-style contribution graph. It wraps the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI in a Tauri 2 shell and surfaces sessions from Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, and Droid in one glanceable place. Tokcat runs entirely on-device, makes zero analytics requests, requires no account, and reads token data from local session logs that `tokscale` already collects. The app is MIT-licensed, distributed via Homebrew (`brew install --cask tokcat`) and as a signed DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D or 3D GitHub-style contribution graph. It wraps the [`tokscale`](https://github.com/junhoyeo/tokscale) CLI in a Tauri 2 shell and surfaces sessions from Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, and Droid in one glanceable place. Tokcat runs entirely on-device, makes zero analytics requests, requires no account, and reads token data from local session logs that `tokscale` already collects. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a signed DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
 
 ### How much does Tokcat cost?
 
-Tokcat is free and open-source under the MIT licence. There is no subscription, no paid tier, and no telemetry. Install with `brew tap handlecusion/tokcat && brew install --cask tokcat`.
+Tokcat is free and open-source under the MIT licence. There is no subscription, no paid tier, and no telemetry. Install with `brew install --cask handlecusion/tokcat/tokcat`.
 
 ### Which AI coding tools does Tokcat track?
 
@@ -260,7 +278,7 @@ After the release lands, bump `Casks/tokcat.rb` in [`handlecusion/homebrew-tokca
 | Repo | Role |
 |---|---|
 | [`handlecusion/tokcat`](https://github.com/handlecusion/tokcat) | App source, GitHub Releases, in-app updater manifest |
-| [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat) | Homebrew tap (`Casks/tokcat.rb`) — what `brew install --cask tokcat` resolves |
+| [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat) | Homebrew tap (`Casks/tokcat.rb`) — what `brew install --cask handlecusion/tokcat/tokcat` resolves |
 | [`junhoyeo/tokscale`](https://github.com/junhoyeo/tokscale) | The upstream CLI Tokcat depends on for all data |
 
 ---
@@ -277,6 +295,6 @@ MIT. See [LICENSE](LICENSE).
 
 <p align="center">
 <br>
-<code>brew tap handlecusion/tokcat &amp;&amp; brew install --cask tokcat</code><br>
+<code>brew install --cask handlecusion/tokcat/tokcat</code><br>
 <sub>macOS 11+ · Apple Silicon · Tauri 2 · React / Vite · MIT</sub>
 </p>
