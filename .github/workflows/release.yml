@@ -79,19 +79,31 @@ jobs:
 
       - name: Generate latest.json
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.meta.outputs.version }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           SIG_FILE="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz.sig"
           LATEST_JSON="src-tauri/target/release/bundle/latest.json"
+          NOTES_FILE="src-tauri/target/release/bundle/release-notes.md"
           SIGNATURE="$(cat "$SIG_FILE")"
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           DOWNLOAD_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          NOTES="$(git tag -l --format='%(contents)' "$TAG")"
-          if [[ -z "$NOTES" ]]; then
-            NOTES="Tokcat $VERSION"
+
+          TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}")"
+          TAG_TYPE="$(jq -r '.object.type' <<< "$TAG_OBJECT")"
+          TAG_SHA="$(jq -r '.object.sha' <<< "$TAG_OBJECT")"
+          if [[ "$TAG_TYPE" == "tag" ]]; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_SHA}" --jq '.message' > "$NOTES_FILE"
+          else
+            printf 'Tokcat %s\n' "$VERSION" > "$NOTES_FILE"
           fi
+          if [[ ! -s "$NOTES_FILE" ]]; then
+            printf 'Tokcat %s\n' "$VERSION" > "$NOTES_FILE"
+          fi
+          NOTES="$(cat "$NOTES_FILE")"
+
           jq -n \
             --arg version "$VERSION" \
             --arg notes "$NOTES" \
@@ -113,17 +125,17 @@ jobs:
           APP_TGZ="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz"
           APP_SIG="src-tauri/target/release/bundle/macos/Tokcat.app.tar.gz.sig"
           LATEST_JSON="src-tauri/target/release/bundle/latest.json"
-          TAG_NOTES="$(git tag -l --format='%(contents)' "$TAG")"
-          if [[ -n "$TAG_NOTES" ]]; then
+          NOTES_FILE="src-tauri/target/release/bundle/release-notes.md"
+          if [[ -s "$NOTES_FILE" ]]; then
             gh release create "$TAG" \
               "$DMG" "$APP_TGZ" "$APP_SIG" "$LATEST_JSON" \
               --title "Tokcat $VERSION" \
-              --notes "$TAG_NOTES"
+              --notes-file "$NOTES_FILE"
           else
             gh release create "$TAG" \
               "$DMG" "$APP_TGZ" "$APP_SIG" "$LATEST_JSON" \
               --title "Tokcat $VERSION" \
-              --generate-notes
+              --notes "Tokcat $VERSION"
           fi
 
       - name: Compute DMG sha256
