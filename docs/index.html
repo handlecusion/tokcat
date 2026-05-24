@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Tokcat — AI Token Usage Monitor for the macOS Menu Bar</title>
+  <title>Tokcat - AI Token Usage Monitor for the macOS Menu Bar</title>
   <meta name="description" content="Tokcat is a free, open-source AI token usage monitor for the macOS menu bar: track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM cost tracker data as a 2D or 3D GitHub-style contribution graph." />
   <link rel="canonical" href="https://handlecusion.github.io/tokcat/" />
   <meta name="robots" content="index,follow,max-image-preview:large" />
@@ -12,16 +12,18 @@
 
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Tokcat" />
-  <meta property="og:title" content="Tokcat — AI Token Usage Monitor for macOS" />
+  <meta property="og:title" content="Tokcat - AI Token Usage Monitor for macOS" />
   <meta property="og:description" content="Track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM costs from the macOS menu bar. Free, open-source, no telemetry." />
   <meta property="og:url" content="https://handlecusion.github.io/tokcat/" />
-  <meta property="og:image" content="https://opengraph.githubassets.com/1/handlecusion/tokcat" />
+  <meta property="og:image" content="https://handlecusion.github.io/tokcat/screenshots/dashboard-3d.png" />
 
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Tokcat — AI token usage monitor for macOS" />
-  <meta name="twitter:description" content="Claude Code usage, Codex usage, Cursor usage, and LLM cost tracker data — one macOS menu-bar cat, one contribution graph." />
-  <meta name="twitter:image" content="https://opengraph.githubassets.com/1/handlecusion/tokcat" />
+  <meta name="twitter:title" content="Tokcat - AI token usage monitor for macOS" />
+  <meta name="twitter:description" content="Claude Code usage, Codex usage, Cursor usage, and LLM cost tracker data in one macOS menu-bar cat and contribution graph." />
+  <meta name="twitter:image" content="https://handlecusion.github.io/tokcat/screenshots/dashboard-3d.png" />
 
+  <link rel="icon" href="favicon.png" />
+  <link rel="stylesheet" href="styles.css" />
   <link rel="alternate" type="text/plain" title="llms.txt" href="https://raw.githubusercontent.com/handlecusion/tokcat/main/llms.txt" />
   <link rel="alternate" hreflang="en" href="https://github.com/handlecusion/tokcat/blob/main/README.md" />
   <link rel="alternate" hreflang="ko" href="https://github.com/handlecusion/tokcat/blob/main/README.ko-KR.md" />
@@ -66,7 +68,7 @@
           "Animated menu-bar cat icon reflecting token velocity",
           "macOS NSVisualEffectView vibrancy and light/dark adaptation",
           "Signed in-app updater with 30-minute check interval",
-          "Local-only data — no telemetry, no account",
+          "Local-only data with no telemetry and no account",
           "Launch at login via Tauri autostart"
         ],
         "offers": {
@@ -112,7 +114,7 @@
             "name": "How much does Tokcat cost?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat is free and open-source under the MIT licence. There is no subscription, no paid tier, and no telemetry. Install with brew tap handlecusion/tokcat && brew install --cask tokcat."
+              "text": "Tokcat is free and open-source under the MIT license. There is no subscription, no paid tier, and no telemetry. Install with brew install --cask handlecusion/tokcat/tokcat."
             }
           },
           {
@@ -160,86 +162,232 @@
     ]
   }
   </script>
-
-  <style>
-    :root { color-scheme: light dark; }
-    body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1.25rem; }
-    h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
-    h2 { margin-top: 2rem; font-size: 1.15rem; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    pre { background: rgba(127,127,127,.12); padding: .75rem 1rem; border-radius: 8px; overflow:auto; }
-    a { color: #0a6cf5; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .pill { display:inline-block; padding:.15rem .55rem; border-radius:999px; background:rgba(127,127,127,.16); font-size:.78rem; margin-right:.35rem; }
-    details summary { cursor: pointer; font-weight: 600; }
-  </style>
 </head>
 <body>
-  <h1>Tokcat</h1>
-  <p><strong>AI token usage monitor for the macOS menu bar.</strong></p>
-  <p>
-    <span class="pill">macOS 11+</span>
-    <span class="pill">Apple Silicon</span>
-    <span class="pill">Tauri 2</span>
-    <span class="pill">MIT</span>
-    <span class="pill">No telemetry</span>
-  </p>
+  <header class="site-header" aria-label="Site header">
+    <a class="brand" href="#top" aria-label="Tokcat home">
+      <img src="favicon.png" alt="" />
+      <span>Tokcat</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary navigation">
+      <a href="#install">Install</a>
+      <a href="#usage">Usage</a>
+      <a href="#privacy">Privacy</a>
+      <a href="https://github.com/handlecusion/tokcat">GitHub</a>
+    </nav>
+  </header>
 
-  <p>
-    Tokcat is an <strong>AI token usage monitor</strong> and <strong>LLM cost tracker</strong> for the macOS menu bar,
-    built with <strong>Tauri 2</strong> (Rust + React/Vite). It tracks <strong>Claude Code usage, OpenAI Codex usage, Cursor usage,
-    OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, and Hermes</strong> as a 2D or 3D GitHub-style
-    contribution graph. The animated cat icon shows today's tokens or USD cost; clicking opens a
-    frosted-glass popover with per-client filters, streak summaries, and a settings panel. Tokcat
-    reads local usage logs on-device, checks for signed updates every <strong>30 minutes</strong>, ships zero
-    telemetry, and requires no account.
-  </p>
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-grid" aria-hidden="true"></div>
+      <video
+        class="hero-video"
+        autoplay
+        muted
+        loop
+        playsinline
+        preload="metadata"
+        poster="tokcat-landing-poster.png"
+        aria-hidden="true"
+      >
+        <source src="tokcat-landing-motion.mp4" type="video/mp4" />
+      </video>
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-content">
+        <p class="eyebrow">Local command center for AI spend</p>
+        <h1 id="hero-title">Tokcat</h1>
+        <p class="hero-copy">
+          AI token usage monitor and LLM cost tracker for Claude Code usage, Codex usage, Cursor usage,
+          Copilot, Gemini, OpenCode, Amp, Droid, and Hermes. Local logs in, clear spend out.
+        </p>
+        <div class="hero-actions" aria-label="Primary actions">
+          <a class="button primary" href="#install">Install with Homebrew</a>
+          <a class="button secondary" href="https://github.com/handlecusion/tokcat/releases/latest">Latest release</a>
+        </div>
+        <dl class="hero-stats" aria-label="Tokcat highlights">
+          <div>
+            <dt>Runtime</dt>
+            <dd>macOS 11+ arm64</dd>
+          </div>
+          <div>
+            <dt>Data path</dt>
+            <dd>Local-only logs</dd>
+          </div>
+          <div>
+            <dt>Surface</dt>
+            <dd>2D and 3D graph</dd>
+          </div>
+        </dl>
+        <div class="signal-rail" aria-label="Tokcat privacy and runtime signals">
+          <span><i class="signal green"></i>No telemetry</span>
+          <span><i class="signal white"></i>Signed updater</span>
+          <span><i class="signal crimson"></i>Local only</span>
+        </div>
+      </div>
+    </section>
 
-  <h2>Install</h2>
-  <pre><code>brew tap handlecusion/tokcat
-brew install --cask tokcat</code></pre>
-  <p>Or grab the latest signed DMG from
-    <a href="https://github.com/handlecusion/tokcat/releases/latest">GitHub Releases</a>.</p>
+    <section id="install" class="install-band" aria-labelledby="install-title">
+      <div class="section-inner install-grid">
+        <div>
+          <p class="section-kicker">Quick start</p>
+          <h2 id="install-title">Install, launch, click the menu-bar cat.</h2>
+          <p>
+            Tokcat reads supported AI coding session logs directly on your Mac. No separate token-usage CLI,
+            cloud account, or telemetry pipeline is required.
+          </p>
+        </div>
+        <div class="terminal" aria-label="Homebrew install command">
+          <div class="terminal-top" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <pre><code>brew install --cask handlecusion/tokcat/tokcat</code></pre>
+        </div>
+      </div>
+    </section>
 
-  <h2>Links</h2>
-  <ul>
-    <li><a href="https://github.com/handlecusion/tokcat">Source on GitHub</a></li>
-    <li><a href="https://github.com/handlecusion/tokcat/blob/main/README.md">README (English)</a></li>
-    <li><a href="https://github.com/handlecusion/tokcat/blob/main/README.ko-KR.md">README (한국어)</a></li>
-    <li><a href="https://github.com/handlecusion/homebrew-tokcat">Homebrew tap</a></li>
-    <li><a href="https://raw.githubusercontent.com/handlecusion/tokcat/main/llms.txt">llms.txt</a></li>
-  </ul>
+    <section id="usage" class="section" aria-labelledby="usage-title">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="section-kicker">Operational surfaces</p>
+          <h2 id="usage-title">See the menubar workflow before you install.</h2>
+          <p>
+            Real Tokcat screenshots show the daily cost view, the 2D and 3D contribution graphs,
+            and the settings panel used to tune the menubar behavior.
+          </p>
+        </div>
 
-  <h2>FAQ</h2>
-  <details><summary>What is Tokcat?</summary>
-    <p>Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D or 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, and Hermes in one glanceable place. The app runs entirely on-device, makes zero analytics requests, and requires no account.</p>
-  </details>
-  <details><summary>How much does Tokcat cost?</summary>
-    <p>Tokcat is free and open-source under the MIT licence. There is no subscription, no paid tier, and no telemetry. Install with <code>brew tap handlecusion/tokcat &amp;&amp; brew install --cask tokcat</code>.</p>
-  </details>
-  <details><summary>Which AI coding tools does Tokcat track?</summary>
-    <p>Tokcat tracks <strong>Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, Hermes</strong>, and compatible local logs. New client formats are added in Tokcat's Rust usage reader.</p>
-  </details>
-  <details><summary>Does Tokcat send my data anywhere?</summary>
-    <p>No. Tokcat's only network request is a check against the GitHub Releases updater manifest. There is no telemetry, no analytics, no cloud sync, no account, and no third-party server. All token data is read locally from session logs.</p>
-  </details>
-  <details><summary>How is Tokcat different from CLI token-usage tools?</summary>
-    <p>Tokcat is a native macOS GUI and background local-log reader — an animated menu-bar cat, a click-to-open frosted-glass dashboard with a 2D heatmap and an interactive 3D tile graph, per-client filters, streaks, and a settings panel. It does not require a separate token-usage CLI at runtime.</p>
-  </details>
-  <details><summary>Does Tokcat run on Intel Macs or Windows?</summary>
-    <p>Tokcat ships only for <strong>Apple Silicon (arm64) on macOS 11+</strong>. There is no Intel x86_64 build and no Windows or Linux build.</p>
-  </details>
+        <div class="showcase-grid">
+          <article class="showcase-card large">
+            <img src="screenshots/dashboard-3d.png" alt="Tokcat 3D contribution graph dashboard" />
+            <div>
+              <h3>3D contribution graph</h3>
+              <p>Interactive tile terrain with cost and token totals visible at a glance.</p>
+            </div>
+          </article>
+          <article class="showcase-card">
+            <img src="screenshots/dashboard-2d.png" alt="Tokcat 2D heatmap dashboard" />
+            <div>
+              <h3>2D heatmap</h3>
+              <p>GitHub-style daily activity for long-term AI coding agent usage.</p>
+            </div>
+          </article>
+          <article class="showcase-card">
+            <img src="screenshots/settings.png" alt="Tokcat settings panel" />
+            <div>
+              <h3>System-style settings</h3>
+              <p>Menu-bar title, launch at login, animation style, and updater checks.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
-  <h2>Privacy</h2>
-  <p>
-    No telemetry. No cloud sync. No account. Tokcat's only network traffic is the updater
-    manifest fetched from <code>github.com/handlecusion/tokcat/releases/latest/download/latest.json</code>
-    every 30 minutes. All token-usage data is read locally from session logs.
-  </p>
+    <section class="section tools-section" aria-labelledby="tools-title">
+      <div class="section-inner tools-grid">
+        <div>
+          <p class="section-kicker">Supported sources</p>
+          <h2 id="tools-title">One local dashboard for the AI tools that leave usage trails.</h2>
+          <p class="tools-copy">
+            Each source is normalized into the same contribution timeline, so token-heavy days and
+            high-cost clients stand out without leaving the menu bar.
+          </p>
+        </div>
+        <ul class="tool-list" aria-label="Supported AI coding tools">
+          <li>Claude Code</li>
+          <li>OpenAI Codex</li>
+          <li>Cursor</li>
+          <li>GitHub Copilot</li>
+          <li>Gemini</li>
+          <li>OpenCode</li>
+          <li>Amp</li>
+          <li>Droid</li>
+          <li>Hermes</li>
+        </ul>
+      </div>
+    </section>
 
-  <p style="margin-top:3rem;opacity:.65;font-size:.85rem;">
-    © Tokcat contributors · MIT licence ·
-    <a href="https://github.com/handlecusion/tokcat">github.com/handlecusion/tokcat</a>
-  </p>
+    <section class="section" aria-labelledby="features-title">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="section-kicker">Why it exists</p>
+          <h2 id="features-title">Token spend is easier to manage when it is always visible.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>Glanceable</h3>
+            <p>The animated menu-bar title can show today's tokens, today's cost, total tokens, total cost, or icon-only mode.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Native</h3>
+            <p>Tauri 2, Rust, React, macOS vibrancy, light and dark adaptation, and a chromeless popover window.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Multi-client</h3>
+            <p>Filter by Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and compatible logs.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Actionable</h3>
+            <p>Streaks, daily average, best day, per-client totals, and model-aware cost estimates make usage patterns obvious.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy" class="privacy-band" aria-labelledby="privacy-title">
+      <div class="section-inner privacy-grid">
+        <div>
+          <p class="section-kicker">Privacy model</p>
+          <h2 id="privacy-title">No telemetry. No account. No cloud sync.</h2>
+        </div>
+        <p>
+          Tokcat's only network traffic is the signed updater manifest from GitHub Releases. Usage data is read
+          from local session logs and rendered in the menubar dashboard on-device.
+        </p>
+      </div>
+    </section>
+
+    <section class="section faq-section" aria-labelledby="faq-title">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="section-kicker">FAQ</p>
+          <h2 id="faq-title">Common install and usage questions.</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>What is Tokcat?</summary>
+            <p>Tokcat is a free, open-source native macOS menu-bar app that visualizes AI coding token usage as a 2D or 3D contribution graph.</p>
+          </details>
+          <details>
+            <summary>How much does Tokcat cost?</summary>
+            <p>Tokcat is free and open-source under the MIT license. There is no subscription, paid tier, telemetry, or account.</p>
+          </details>
+          <details>
+            <summary>Which AI coding tools does Tokcat track?</summary>
+            <p>Tokcat tracks Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, Hermes, and compatible local logs.</p>
+          </details>
+          <details>
+            <summary>Does Tokcat send my data anywhere?</summary>
+            <p>No. Token usage stays local. The app checks GitHub Releases for updater metadata and does not run analytics.</p>
+          </details>
+          <details>
+            <summary>Does Tokcat run on Intel Macs or Windows?</summary>
+            <p>Tokcat ships for Apple Silicon Macs on macOS 11 or newer. There is no Intel, Windows, or Linux build.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="section-inner footer-grid">
+      <span>Tokcat contributors. MIT license.</span>
+      <nav aria-label="Footer links">
+        <a href="https://github.com/handlecusion/tokcat">GitHub</a>
+        <a href="https://github.com/handlecusion/tokcat/blob/main/README.md">README</a>
+        <a href="https://github.com/handlecusion/tokcat/blob/main/README.ko-KR.md">Korean README</a>
+        <a href="https://raw.githubusercontent.com/handlecusion/tokcat/main/llms.txt">llms.txt</a>
+      </nav>
+    </div>
+  </footer>
 </body>
 </html>

@@ -11,6 +11,7 @@
     "dev:vite": "node server.js",
     "build": "vite build",
     "check:seo": "python3 scripts/check_seo.py",
+    "render:landing": "remotion render remotion/index.ts TokcatLandingMotion docs/tokcat-landing-motion.mp4 --codec=h264 --crf=26 --overwrite",
     "preview": "vite preview --port 4061",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -31,6 +32,7 @@
     "three": "^0.171.0"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.465",
     "@tauri-apps/cli": "^2.11.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.9.3",
@@ -38,6 +40,7 @@
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.3.3",
+    "remotion": "^4.0.465",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
   }
