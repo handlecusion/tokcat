@@ -6,6 +6,7 @@ interface Props {
   buckets: TraceBucket[]
   windowSecs: number
   detailed: boolean
+  title?: string
 }
 
 const CLIENT_LABEL: Record<string, string> = {
@@ -54,7 +55,7 @@ function collapseByClient(buckets: TraceBucket[]): TraceBucket[] {
   }).sort((a, b) => b.tokens - a.tokens)
 }
 
-export function UsageTraceCard({ buckets, windowSecs, detailed }: Props) {
+export function UsageTraceCard({ buckets, windowSecs, detailed, title = 'Live trace' }: Props) {
   const rows = detailed ? buckets : collapseByClient(buckets)
   const top = rows.slice(0, 5)
   const max = top.reduce((m, b) => Math.max(m, b.tokens_per_min), 0)
@@ -64,7 +65,7 @@ export function UsageTraceCard({ buckets, windowSecs, detailed }: Props) {
   return (
     <div className="trace-card">
       <div className="trace-head">
-        <h2 className="trace-heading">Live trace</h2>
+        <h2 className="trace-heading">{title}</h2>
         <div className="trace-sub">
           last {windowMin}m · {humanizeTokens(Math.round(totalRate))}/m total
         </div>

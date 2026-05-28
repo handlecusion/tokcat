@@ -9,13 +9,11 @@ interface Props {
   onYearChange: (y: string) => void
   theme: string
   onThemeChange: (t: string) => void
-  view: '2D' | '3D'
-  onViewChange: (v: '2D' | '3D') => void
   onRefresh?: () => void
   onOpenSettings?: () => void
 }
 
-export function HeaderBar({ totalTokens, year, years, onYearChange, theme, onThemeChange, view, onViewChange, onRefresh, onOpenSettings }: Props) {
+export function HeaderBar({ totalTokens, year, years, onYearChange, theme, onThemeChange, onRefresh, onOpenSettings }: Props) {
   return (
     <div className="header-bar" data-tauri-drag-region>
       <div className="header-brand" data-tauri-drag-region>
@@ -36,10 +34,6 @@ export function HeaderBar({ totalTokens, year, years, onYearChange, theme, onThe
             <option key={t.name} value={t.name}>{t.name}</option>
           ))}
         </select>
-        <div className="view-toggle">
-          <button className={view === '2D' ? 'active' : ''} onClick={() => onViewChange('2D')}>2D</button>
-          <button className={view === '3D' ? 'active' : ''} onClick={() => onViewChange('3D')}>3D</button>
-        </div>
         {onRefresh && (
           <button className="settings-btn" onClick={onRefresh} aria-label="Refresh" title="Refresh">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

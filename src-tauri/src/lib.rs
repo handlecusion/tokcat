@@ -1,4 +1,5 @@
 mod animation;
+mod agent_usage;
 #[cfg(target_os = "macos")]
 mod native_tray;
 mod state;
@@ -31,6 +32,11 @@ pub struct RateUpdate {
     #[serde(rename = "tokensPerMin")]
     pub tokens_per_min: f32,
     pub trace: Vec<TraceBucket>,
+}
+
+#[tauri::command]
+async fn get_agent_usage() -> Result<agent_usage::AgentUsagePayload, String> {
+    Ok(agent_usage::run().await)
 }
 
 #[tauri::command]
@@ -312,6 +318,7 @@ pub fn run() {
             set_animation_style,
             get_usage_trace,
             get_tokens_per_min,
+            get_agent_usage,
             set_popover_height,
             tray::update_tray_title
         ]);

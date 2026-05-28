@@ -1,23 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Panel } from './components/Panel'
 import { HeaderBar } from './components/HeaderBar'
-import { FilterChips } from './components/FilterChips'
-import { InnerCard } from './components/InnerCard'
 import { TokenUsageCard } from './components/TokenUsageCard'
 import { StreaksCard } from './components/StreaksCard'
-import { ContributionGraph2D } from './components/ContributionGraph2D'
-import { ContributionGraph3D } from './components/ContributionGraph3D'
 import { SettingsPanel } from './components/SettingsPanel'
+import { AgentLimitsCard } from './components/AgentLimitsCard'
+import { DashboardTabs } from './components/DashboardTabs'
+import { UsageBarGraph2D } from './components/UsageBarGraph2D'
 import { useGraphStream } from './hooks/useGraphStream'
+import { useAgentUsage } from './hooks/useAgentUsage'
 import { computeStats } from './lib/stats'
-import { buildGrid } from './lib/grid'
-import { formatCost } from './lib/format'
 import { isTauri } from './lib/runtime'
 import { computeTrayTitle, loadSettings, saveSettings, Settings } from './lib/settings'
 import { TraceBucket, RateUpdate } from './lib/usage'
 import { UsageTraceCard } from './components/UsageTraceCard'
 import { checkForUpdatesSilent, checkForUpdatesInteractive } from './lib/updater'
 import { getTheme, THEMES, ThemeName } from './lib/themes'
+import { getClientStyle } from './lib/clients'
 
 const THEME_KEY = 'tokcat:theme:v1'
 
@@ -35,22 +34,21 @@ function defaultYear(): string {
 
 export default function App() {
   const [year, setYear] = useState<string>(defaultYear())
+  const [refreshTick, setRefreshTick] = useState(0)
   const { payload, error } = useGraphStream(year)
+  const agentUsage = useAgentUsage(refreshTick)
   const [theme, setTheme] = useState<ThemeName>(() => loadTheme())
   const [isDark, setIsDark] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.matchMedia
       ? window.matchMedia('(prefers-color-scheme: dark)').matches
       : false
   )
-  const [view, setView] = useState<'2D' | '3D'>('3D')
-  const [selected, setSelected] = useState<Set<string> | null>(null)
+  const [activeTab, setActiveTab] = useState<string>('overview')
   const [settings, setSettings] = useState<Settings>(() => loadSettings())
   const [settingsOpen, setSettingsOpen] = useState(false)
 
-  const [knownClients, setKnownClients] = useState<Set<string>>(new Set())
   const [aboutOpen, setAboutOpen] = useState(false)
   const [appVersion, setAppVersion] = useState('')
-  const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
     saveSettings(settings)
@@ -150,48 +148,6 @@ export default function App() {
     })()
   }, [refreshTick, year])
 
-  // Initialize / reconcile selected clients when payload arrives.
-  useEffect(() => {
-    if (!payload) return
-    const present = new Set<string>()
-    for (const c of payload.contributions) for (const cc of c.clients) present.add(cc.client)
-    setSelected(prev => {
-      if (!prev) return new Set(present)
-      const next = new Set<string>()
-      for (const id of present) {
-        if (knownClients.has(id)) {
-          if (prev.has(id)) next.add(id)
-        } else {
-          next.add(id)
-        }
-      }
-      if (next.size === prev.size) {
-        let same = true
-        for (const id of next) if (!prev.has(id)) { same = false; break }
-        if (same) return prev
-      }
-      return next
-    })
-    setKnownClients(prev => {
-      let added = false
-      for (const id of present) if (!prev.has(id)) { added = true; break }
-      if (!added) return prev
-      const merged = new Set(prev)
-      for (const id of present) merged.add(id)
-      return merged
-    })
-  }, [payload])
-
-  const stats = useMemo(() => {
-    if (!payload || !selected) return null
-    return computeStats(payload, selected)
-  }, [payload, selected])
-
-  const grid = useMemo(() => {
-    if (!stats) return null
-    return buildGrid(year, stats.perDayMap)
-  }, [stats, year])
-
   const allYears = useMemo(() => {
     if (!payload) return [year]
     return payload.years.map(y => y.year)
@@ -204,14 +160,33 @@ export default function App() {
     return Array.from(set).sort()
   }, [payload])
 
-  function toggleClient(id: string) {
-    setSelected(prev => {
-      const next = new Set(prev ?? [])
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  const dashboardClients = useMemo(() => {
+    const set = new Set(presentClients)
+    for (const agent of agentUsage.payload?.agents ?? []) set.add(agent.clientId)
+    return Array.from(set).sort()
+  }, [agentUsage.payload, presentClients])
+
+  useEffect(() => {
+    if (activeTab === 'overview') return
+    if (!dashboardClients.includes(activeTab)) setActiveTab('overview')
+  }, [activeTab, dashboardClients])
+
+  const overviewClientSet = useMemo(() => new Set(presentClients), [presentClients])
+  const activeClientIds = useMemo(
+    () => (activeTab === 'overview' ? presentClients : [activeTab]),
+    [activeTab, presentClients],
+  )
+  const activeClientSet = useMemo(() => new Set(activeClientIds), [activeClientIds])
+
+  const overviewStats = useMemo(() => {
+    if (!payload) return null
+    return computeStats(payload, overviewClientSet)
+  }, [overviewClientSet, payload])
+
+  const activeStats = useMemo(() => {
+    if (!payload) return null
+    return computeStats(payload, activeClientSet)
+  }, [activeClientSet, payload])
 
   // Live tokens-per-minute + per-(client, agent, model) breakdown, pushed
   // by the backend's JSONL tailer every ~5s. No client-side diffing — the
@@ -243,10 +218,10 @@ export default function App() {
     }
   }, [])
 
-  // Push tray title whenever stats, trayMode, or the rate changes (Tauri only).
+  // Push tray title from the all-agent overview, regardless of the visible tab.
   useEffect(() => {
     if (!isTauri()) return
-    const title = computeTrayTitle(settings.trayMode, stats, tokensPerMin)
+    const title = computeTrayTitle(settings.trayMode, overviewStats, tokensPerMin)
     ;(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core')
@@ -255,7 +230,7 @@ export default function App() {
         // ignore
       }
     })()
-  }, [stats, settings.trayMode, tokensPerMin])
+  }, [overviewStats, settings.trayMode, tokensPerMin])
 
   // Push animateTray flag to backend whenever it changes (Tauri only).
   useEffect(() => {
@@ -321,7 +296,7 @@ export default function App() {
       ro.disconnect()
       if (unlistenShown) unlistenShown()
     }
-  }, [trace.length, stats?.totalTokens, view, settings.trayMode, settings.detailedTrace])
+  }, [activeStats?.totalTokens, activeTab, trace.length, settings.trayMode, settings.detailedTrace])
 
   return (
     <div className="page" ref={pageRef}>
@@ -329,49 +304,56 @@ export default function App() {
         <Panel>
           {!payload && !error && <div className="loading">Loading…</div>}
           {error && <div className="error">Error: {error}</div>}
-          {payload && stats && grid && selected && (
+          {payload && overviewStats && activeStats && (
             <>
               <HeaderBar
-                totalTokens={stats.totalTokens}
+                totalTokens={overviewStats.totalTokens}
                 year={year}
                 years={allYears}
                 onYearChange={setYear}
                 theme={theme}
                 onThemeChange={(t) => setTheme(t as ThemeName)}
-                view={view}
-                onViewChange={setView}
                 onRefresh={() => setRefreshTick(t => t + 1)}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
-              <FilterChips presentClients={presentClients} selected={selected} onToggle={toggleClient} />
-              <InnerCard>
-                <div className="card-grid">
-                  <div className="card-graph" key={view}>
-                    {view === '3D' ? (
-                      <ContributionGraph3D
-                        grid={grid}
-                        activeLight={palette.graphLight}
-                        activeDark={palette.graphDark}
-                        accent={mode.accent}
-                      />
-                    ) : (
-                      <ContributionGraph2D grid={grid} colorRgb={palette.graph2dRgb} />
-                    )}
-                  </div>
-                  {view === '3D' && (
-                    <div className="overlay-tr">
-                      <TokenUsageCard stats={stats} />
-                      <div className="overlay-avg">
-                        Average: <span className="overlay-avg-num">{formatCost(stats.averagePerDay)}</span> / day
-                      </div>
-                    </div>
-                  )}
-                  <div className="overlay-bl">
-                    <StreaksCard longest={stats.streaks.longest} current={stats.streaks.current} />
-                  </div>
+              <DashboardTabs clients={dashboardClients} active={activeTab} onChange={setActiveTab} />
+              {activeTab === 'overview' ? (
+                <div className="dashboard-stack">
+                  <TokenUsageCard stats={overviewStats} />
+                  <AgentLimitsCard clients={dashboardClients} trace={trace} agentUsage={agentUsage.payload} />
+                  <UsageBarGraph2D
+                    payload={payload}
+                    clientIds={presentClients}
+                    title="30d usage"
+                    subtitle="Stacked by agent"
+                  />
+                  <UsageTraceCard
+                    buckets={trace}
+                    windowSecs={600}
+                    detailed={settings.detailedTrace}
+                    title="Live session"
+                  />
+                  <StreaksCard longest={overviewStats.streaks.longest} current={overviewStats.streaks.current} />
                 </div>
-              </InnerCard>
-              <UsageTraceCard buckets={trace} windowSecs={600} detailed={settings.detailedTrace} />
+              ) : (
+                <div className="dashboard-stack">
+                  <AgentLimitsCard
+                    clients={[activeTab]}
+                    trace={trace}
+                    agentUsage={agentUsage.payload}
+                    title={`${getClientStyle(activeTab).displayName} limits`}
+                    note="Session / weekly / model limits"
+                  />
+                  <TokenUsageCard stats={activeStats} />
+                  <UsageBarGraph2D
+                    payload={payload}
+                    clientIds={[activeTab]}
+                    title={`${getClientStyle(activeTab).displayName} 30d usage`}
+                    subtitle="Local token history"
+                  />
+                  <StreaksCard longest={activeStats.streaks.longest} current={activeStats.streaks.current} />
+                </div>
+              )}
             </>
           )}
         </Panel>
