@@ -1,13 +1,26 @@
 import React, { useMemo, useState } from 'react'
 import { getClientStyle } from '../lib/clients'
 import { addDays, formatCost, formatMonthDay, isoDate, parseISODate } from '../lib/format'
-import type { Contribution, TokenBreakdown, UsagePayload } from '../lib/types'
+import type { Contribution, Stats, TokenBreakdown, UsagePayload } from '../lib/types'
+import type { GridLayout } from '../lib/grid'
+import { ContributionGraph3D } from './ContributionGraph3D'
+import { TokenUsageCard } from './TokenUsageCard'
+
+export type UsageView = '2d' | '3d'
 
 interface Props {
   payload: UsagePayload
   clientIds: string[]
   title: string
   subtitle?: string
+  view: UsageView
+  onViewChange: (view: UsageView) => void
+  grid: GridLayout
+  graphLight: string
+  graphDark: string
+  accent: string
+  /** When provided, the card leads with these token-usage totals (shown in both 2D and 3D). */
+  stats?: Stats
 }
 
 interface Segment {
@@ -70,8 +83,21 @@ function exactTokens(tokens: number): string {
   return tokens.toLocaleString('en-US')
 }
 
-export function UsageBarGraph2D({ payload, clientIds, title, subtitle }: Props) {
+export function UsageBarGraph2D({
+  payload,
+  clientIds,
+  title,
+  subtitle,
+  view,
+  onViewChange,
+  grid,
+  graphLight,
+  graphDark,
+  accent,
+  stats,
+}: Props) {
   const [hover, setHover] = useState<HoverState | null>(null)
+  const headSubtitle = stats && view === '3d' ? 'Full year' : subtitle
   const bars = useMemo(() => {
     const allowed = new Set(clientIds)
     const byDate = new Map<string, DayBar>()
@@ -94,7 +120,10 @@ export function UsageBarGraph2D({ payload, clientIds, title, subtitle }: Props) 
 
   const maxTokens = Math.max(1, ...bars.map(b => b.totalTokens))
   const width = 520
-  const height = 164
+  // viewBox height matches the rendered CSS height (.bar2d-svg) so there is no
+  // vertical distortion, and equals the 3D canvas height so toggling 2D/3D
+  // never changes the card height.
+  const height = 240
   const top = 14
   const bottom = 24
   const chartHeight = height - top - bottom
@@ -127,18 +156,52 @@ export function UsageBarGraph2D({ payload, clientIds, title, subtitle }: Props) 
       <div className="bar2d-head">
         <div>
           <h2 className="bar2d-title">{title}</h2>
-          {subtitle && <div className="bar2d-sub">{subtitle}</div>}
+          {headSubtitle && <div className="bar2d-sub">{headSubtitle}</div>}
         </div>
-        <div className="bar2d-legend">
-          {activeClients.slice(0, 5).map(style => (
-            <span key={style.id} className="bar2d-legend-item">
-              <span className="bar2d-dot" style={{ background: style.color }} />
-              {style.displayName.replace(/\s+(CLI|Code|IDE)$/i, '')}
-            </span>
-          ))}
+        <div className="bar2d-head-right">
+          <div className="bar2d-viewtoggle" role="group" aria-label="Chart view">
+            <button
+              type="button"
+              className={`bar2d-viewbtn${view === '2d' ? ' is-active' : ''}`}
+              onClick={() => onViewChange('2d')}
+              aria-pressed={view === '2d'}
+            >
+              2D
+            </button>
+            <button
+              type="button"
+              className={`bar2d-viewbtn${view === '3d' ? ' is-active' : ''}`}
+              onClick={() => onViewChange('3d')}
+              aria-pressed={view === '3d'}
+            >
+              3D
+            </button>
+          </div>
+          <div className="bar2d-legend">
+            {activeClients.slice(0, 5).map(style => (
+              <span key={style.id} className="bar2d-legend-item">
+                <span className="bar2d-dot" style={{ background: style.color }} />
+                {style.displayName.replace(/\s+(CLI|Code|IDE)$/i, '')}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
+      {stats && (
+        <div className="bar2d-stats">
+          <TokenUsageCard stats={stats} bare />
+        </div>
+      )}
+
+      {view === '3d' ? (
+        <ContributionGraph3D
+          grid={grid}
+          activeLight={graphLight}
+          activeDark={graphDark}
+          accent={accent}
+        />
+      ) : (
       <div className="bar2d-chart" onMouseLeave={() => setHover(null)}>
         <svg className="bar2d-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
           <line x1="0" x2={width} y1={height - bottom} y2={height - bottom} className="bar2d-axis" />
@@ -226,6 +289,7 @@ export function UsageBarGraph2D({ payload, clientIds, title, subtitle }: Props) 
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

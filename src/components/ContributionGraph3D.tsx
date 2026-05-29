@@ -16,7 +16,10 @@ interface Props {
 const CELL = 1
 const GAP = 0.15
 const STEP = CELL + GAP
-const BASE_HEIGHT = 0.35
+// Near-flat base so inactive days read as a packed floor and only active days
+// rise as bars (the original look). A taller base turns every tile into a
+// separated cube, which reads as a scattered grid.
+const BASE_HEIGHT = 0.05
 const MAX_HEIGHT = 4.0
 
 // Per-face shading: top is lighter than sides for a stylized 3D tile look.
