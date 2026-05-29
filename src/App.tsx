@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Panel } from './components/Panel'
 import { HeaderBar } from './components/HeaderBar'
-import { TokenUsageCard } from './components/TokenUsageCard'
 import { StreaksCard } from './components/StreaksCard'
 import { SettingsPanel } from './components/SettingsPanel'
 import { AgentLimitsCard } from './components/AgentLimitsCard'
 import { DashboardTabs } from './components/DashboardTabs'
-import { UsageBarGraph2D } from './components/UsageBarGraph2D'
+import { UsageBarGraph2D, UsageView } from './components/UsageBarGraph2D'
+import { buildGrid } from './lib/grid'
 import { useGraphStream } from './hooks/useGraphStream'
 import { useAgentUsage } from './hooks/useAgentUsage'
 import { computeStats } from './lib/stats'
@@ -19,6 +19,7 @@ import { getTheme, THEMES, ThemeName } from './lib/themes'
 import { getClientStyle } from './lib/clients'
 
 const THEME_KEY = 'tokcat:theme:v1'
+const USAGE_VIEW_KEY = 'tokcat:usageview:v1'
 
 function loadTheme(): ThemeName {
   try {
@@ -26,6 +27,14 @@ function loadTheme(): ThemeName {
     if (raw && THEMES.some(t => t.name === raw)) return raw as ThemeName
   } catch {}
   return 'Blue'
+}
+
+function loadUsageView(): UsageView {
+  try {
+    const raw = localStorage.getItem(USAGE_VIEW_KEY)
+    if (raw === '2d' || raw === '3d') return raw
+  } catch {}
+  return '2d'
 }
 
 function defaultYear(): string {
@@ -44,6 +53,7 @@ export default function App() {
       : false
   )
   const [activeTab, setActiveTab] = useState<string>('overview')
+  const [usageView, setUsageView] = useState<UsageView>(() => loadUsageView())
   const [settings, setSettings] = useState<Settings>(() => loadSettings())
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -57,6 +67,10 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, theme) } catch {}
   }, [theme])
+
+  useEffect(() => {
+    try { localStorage.setItem(USAGE_VIEW_KEY, usageView) } catch {}
+  }, [usageView])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
@@ -187,6 +201,18 @@ export default function App() {
     if (!payload) return null
     return computeStats(payload, activeClientSet)
   }, [activeClientSet, payload])
+
+  // Calendar grids for the 3D usage view, one per visible card. Built from the
+  // same per-day token totals the stats already aggregate, so 3D and 2D show
+  // identical data for the selected year.
+  const overviewGrid = useMemo(
+    () => buildGrid(year, overviewStats?.perDayMap ?? new Map()),
+    [year, overviewStats],
+  )
+  const activeGrid = useMemo(
+    () => buildGrid(year, activeStats?.perDayMap ?? new Map()),
+    [year, activeStats],
+  )
 
   // Live tokens-per-minute + per-(client, agent, model) breakdown, pushed
   // by the backend's JSONL tailer every ~5s. No client-side diffing — the
@@ -319,14 +345,20 @@ export default function App() {
               <DashboardTabs clients={dashboardClients} active={activeTab} onChange={setActiveTab} />
               {activeTab === 'overview' ? (
                 <div className="dashboard-stack">
-                  <TokenUsageCard stats={overviewStats} />
-                  <AgentLimitsCard clients={dashboardClients} trace={trace} agentUsage={agentUsage.payload} />
                   <UsageBarGraph2D
                     payload={payload}
                     clientIds={presentClients}
-                    title="30d usage"
+                    title="Token Usage"
                     subtitle="Stacked by agent"
+                    view={usageView}
+                    onViewChange={setUsageView}
+                    grid={overviewGrid}
+                    graphLight={palette.graphLight}
+                    graphDark={palette.graphDark}
+                    accent={mode.accent}
+                    stats={overviewStats}
                   />
+                  <AgentLimitsCard clients={dashboardClients} trace={trace} agentUsage={agentUsage.payload} />
                   <UsageTraceCard
                     buckets={trace}
                     windowSecs={600}
@@ -344,12 +376,18 @@ export default function App() {
                     title={`${getClientStyle(activeTab).displayName} limits`}
                     note="Session / weekly / model limits"
                   />
-                  <TokenUsageCard stats={activeStats} />
                   <UsageBarGraph2D
                     payload={payload}
                     clientIds={[activeTab]}
-                    title={`${getClientStyle(activeTab).displayName} 30d usage`}
+                    title="Token Usage"
                     subtitle="Local token history"
+                    view={usageView}
+                    onViewChange={setUsageView}
+                    grid={activeGrid}
+                    graphLight={palette.graphLight}
+                    graphDark={palette.graphDark}
+                    accent={mode.accent}
+                    stats={activeStats}
                   />
                   <StreaksCard longest={activeStats.streaks.longest} current={activeStats.streaks.current} />
                 </div>

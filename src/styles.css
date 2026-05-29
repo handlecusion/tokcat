@@ -466,6 +466,16 @@ html, body, #root {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+/* Bare: no card chrome — used inside the combined Token-Usage + graph card. */
+.usage-row-card.is-bare {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 .usage-cell {
   min-width: 0;
 }
@@ -673,12 +683,45 @@ html, body, #root {
   height: 7px;
   border-radius: 999px;
 }
+.bar2d-head-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.bar2d-viewtoggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 0.5px solid var(--control-border);
+  background: var(--control-bg);
+  border-radius: 7px;
+}
+.bar2d-viewbtn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.4;
+  padding: 2px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.bar2d-viewbtn.is-active {
+  background: var(--blue);
+  color: #fff;
+}
+.bar2d-stats {
+  margin: 2px 0 12px;
+}
 .bar2d-chart {
   position: relative;
 }
 .bar2d-svg {
   width: 100%;
-  height: 170px;
+  height: 240px;
   display: block;
   overflow: visible;
 }
@@ -827,7 +870,7 @@ html, body, #root {
 }
 .graph-3d-wrap {
   width: 100%;
-  height: 380px;
+  height: 240px;
   position: relative;
 }
 .graph-3d-wrap > div:first-child {
