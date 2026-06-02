@@ -221,7 +221,23 @@ export default function App() {
   const [tokensPerMin, setTokensPerMin] = useState<number | null>(null)
   const [trace, setTrace] = useState<TraceBucket[]>([])
   useEffect(() => {
-    if (!isTauri()) return
+    if (!isTauri()) {
+      let cancelled = false
+      ;(async () => {
+        try {
+          const res = await fetch('/api/rate')
+          if (!res.ok) throw new Error(`rate ${res.status}`)
+          const payload: RateUpdate = await res.json()
+          if (!cancelled) {
+            setTokensPerMin(payload.tokensPerMin)
+            setTrace(payload.trace)
+          }
+        } catch {}
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
     let unlisten: (() => void) | null = null
     ;(async () => {
       try {
