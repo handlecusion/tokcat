@@ -1,10 +1,10 @@
 # Tokcat
 
-> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes, and compatible local logs. It visualizes token usage as a 2D or 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon, macOS 11+. MIT licensed.
+> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon, macOS 11+. MIT licensed.
 
 ## Install
 
-- [Homebrew](https://github.com/handlecusion/tokcat#quick-start): `brew tap handlecusion/tokcat && brew install --cask tokcat`
+- [Homebrew](https://github.com/handlecusion/tokcat#quick-start): `brew install --cask handlecusion/tokcat/tokcat`
 - [DMG download](https://github.com/handlecusion/tokcat/releases/latest)
 - [Homebrew tap repository](https://github.com/handlecusion/homebrew-tokcat)
 
@@ -23,8 +23,8 @@
 
 ## Supported AI clients
 
-Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, Hermes, and compatible local logs.
+Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, and Hermes.
 
 ## Privacy
 
-No telemetry. No cloud sync. No account. The only network request is the GitHub Releases updater manifest checked every 30 minutes. Token data is read locally from session logs.
+No telemetry. No cloud sync. No Tokcat account. Network access is limited to the GitHub Releases updater manifest checked every 30 minutes and direct Codex/Claude OAuth quota lookups when local credentials are available. Token-usage history is read locally from session logs.

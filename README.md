@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no account — and surfaces **8+ AI coding clients** (Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes) in a single 2D or 3D contribution graph. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, or icon-only mode; clicking opens a frosted-glass popover with per-client filters, Live trace, streak summaries, and a settings panel. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as a signed DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
+**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no Tokcat account — and surfaces **9 AI coding clients** (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes) in an Overview dashboard plus per-client tabs. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, or icon-only mode; clicking opens a frosted-glass popover with 2D stacked token bars, an interactive 3D contribution graph, OAuth agent-limit cards, Live session throughput, streak summaries, theme selection, and settings. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as a DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -58,8 +58,9 @@ Tokcat is built for the category searches people actually type when AI coding bi
 - **Claude Code usage** tracker for local session logs
 - **OpenAI Codex usage** and **Codex cost** tracker
 - **Cursor usage** and **Cursor AI token** dashboard
-- **LLM cost tracker** for AI coding agent usage across Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and compatible local logs
-- **GitHub-style contribution graph** for AI coding spend, tokens, streaks, and daily totals
+- **LLM cost tracker** for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, and Hermes
+- **AI coding dashboard** with Overview/client tabs, agent limits, live token velocity, streaks, and daily totals
+- **GitHub-style 3D contribution graph** plus a recent 30-day stacked token chart
 
 ---
 
@@ -70,8 +71,8 @@ Tokcat is built for the category searches people actually type when AI coding bi
 | **Glanceable** | The menu bar title is configurable: today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. |
 | **Native** | Tauri 2 shell with macOS `NSVisualEffectView` vibrancy, system fonts, and `prefers-color-scheme` light/dark adaptation. |
 | **Quiet** | Lives in the menu bar — no Dock icon, no spurious notifications, auto-hides when you click another app. |
-| **Honest** | Numbers come from local session logs read on-device. No telemetry, no cloud sync, no account required. |
-| **Multi-client** | Tokcat reads Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes, and compatible local logs. |
+| **Honest** | Usage history comes from local session logs read on-device. No telemetry, no analytics, no cloud sync, no Tokcat account. |
+| **Multi-client** | Tokcat reads Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes logs. |
 | **Cat** | The menubar cat eats your tokens and spins faster the more it digests — your token throughput as a single, glanceable critter. |
 
 ---
@@ -80,19 +81,21 @@ Tokcat is built for the category searches people actually type when AI coding bi
 
 Tokcat reads local usage logs directly from the Rust backend. On demand from the tray menu, and on a steady background refresh for the popover chart, it scans supported client stores, deduplicates streaming retries, normalizes token fields, estimates cost from a bundled model-price table when the source log does not include cost, and caches the graph payload in memory.
 
-For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. The same signal can drive the menu-bar title, the Live trace card, and the adaptive tray animation.
+For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. The same signal can drive the menu-bar title, the Live session card, and the adaptive tray animation.
 
-The React frontend renders that payload as a 2D heatmap or a 3D tile graph powered by react-three-fiber. Per-client filters, summary cards, and the menu bar title all update from the same local payload.
+For agent-limit cards, Tokcat reads existing Codex and Claude OAuth credentials and asks those vendors' usage endpoints for quota windows. Those direct vendor calls are separate from the local usage history and are not telemetry.
 
-### 2D heatmap
+The React frontend renders the payload as an Overview dashboard with per-client tabs. Each tab shares the same year selector, theme picker, 2D/3D usage card, limit card, live session rows, and streak summaries.
 
-GitHub-style contribution grid. Click and hold for a date / cost / token tooltip.
+### 2D stacked token chart
+
+Recent 30-day token usage, stacked by client or narrowed to the active client tab. Hover for date, token, and cost detail.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-2d.png" alt="Tokcat 2D heatmap" width="640" />
+  <img src="docs/screenshots/dashboard-2d.png" alt="Tokcat 2D usage chart" width="640" />
 </p>
 
-### 3D tile graph
+### 3D contribution graph
 
 Orthographic isometric projection with orbit controls and persistent camera state. The default framing auto-fits to the active tile cluster so populated days stay readable instead of getting lost in the empty future.
 
@@ -102,7 +105,7 @@ Orthographic isometric projection with orbit controls and persistent camera stat
 
 ### Menubar settings
 
-A native System Settings-styled panel for the menu-bar title, animated tray icon, launch-at-login, and one-click update check.
+A native System Settings-styled panel for the menu-bar title, animated tray icon, launch-at-login, Live session detail, and one-click update check. The dashboard header also includes a theme picker, refresh button, and year selector.
 
 <p align="center">
   <img src="docs/screenshots/settings.png" alt="Tokcat Settings panel" width="640" />
@@ -124,18 +127,20 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 
 | Feature | Details |
 |---------|---------|
-| **2D / 3D contribution graph** | GitHub-style heatmap or interactive 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
-| **Per-client filters** | Toggle Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, Hermes, and compatible local logs. |
+| **2D / 3D usage views** | Recent 30-day stacked token bars or interactive full-year 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
+| **Overview + client tabs** | Switch between all-client totals and dedicated tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes when data is present. |
+| **Agent limits** | Codex and Claude OAuth quota cards show session, weekly, model, reset, and remaining-limit windows when local credentials are available. |
 | **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. Token-rate updates are emitted every 3 minutes. |
 | **Animated tray icon** | Optional spinning cat or party parrot animation whose FPS scales with your real-time token velocity. Native CALayer frame swaps keep the animation smooth in the macOS menu bar. |
 | **Native vibrancy + glassmorphism** | Transparent window with macOS `sidebar` `NSVisualEffectView`; light/dark auto via `prefers-color-scheme`. |
 | **Menubar popover behavior** | Chromeless window, drag region on the header, auto-hides when focus leaves the app. |
+| **Theme picker** | Blue, Purple, Pink, Orange, Green, and Graphite palettes persist locally and adapt to light/dark mode. |
 | **Settings panel** | macOS System Settings-styled preferences with switch toggles, sectioned groups, version info, and one-click update check. |
 | **In-app updater** | Signed releases via Tauri updater. Silent check on launch and every 30 minutes; manual check from Settings or the tray menu. |
 | **Launch at login** | Tauri autostart plugin — opt-in via Settings. |
-| **Live trace** | 10-minute tokens/min breakdown by client, with an optional split by agent and model. |
+| **Live session** | 10-minute tokens/min breakdown by client, with an optional split by agent and model. |
 | **Streaks & summaries** | Longest / current streak, total tokens, total cost, daily average, best day. |
-| **No telemetry** | Tokcat never makes a network request except the updater manifest. All data stays local. |
+| **No telemetry** | Usage history stays local. Network calls are limited to signed update checks and direct Codex/Claude quota lookups when credentialed. |
 
 ---
 
@@ -179,6 +184,10 @@ After installation, launch **Tokcat** from `/Applications`. Click the cat in the
 
 Tokcat only reads local usage logs that already exist on disk. Open the AI client, complete at least one request, then choose Refresh Now from the tray menu. If you upgraded from an older Tokcat release that showed a missing-CLI setup dialog, update via Settings → About → Check Now, or `brew upgrade --cask tokcat`.
 
+**Agent limits show Error or No quota**
+
+Limit cards use local OAuth credentials from Codex and Claude. Run `codex login` or `claude` to refresh those credentials, then choose Refresh Now. API-key-only Codex auth can still produce local token history, but OAuth usage limits require OAuth login.
+
 **The menu-bar window vanishes when I click anywhere**
 
 That's intentional — Tokcat behaves like a native menubar popover. To keep it visible while interacting with another app, drag the window away from the menu bar by its header (anywhere outside the controls is a drag region).
@@ -214,7 +223,7 @@ open -na /Applications/Tokcat.app
 
 ### What is Tokcat?
 
-Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D or 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex, Cursor, OpenCode, Gemini, Copilot, Amp, Droid, and Hermes in one glanceable place. Tokcat runs entirely on-device, makes zero analytics requests, requires no account, and reads token data from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a signed DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
 
 ### How much does Tokcat cost?
 
@@ -222,15 +231,15 @@ Tokcat is free and open-source under the MIT licence. There is no subscription, 
 
 ### Which AI coding tools does Tokcat track?
 
-Tokcat tracks **Claude Code, OpenAI Codex, Cursor, OpenCode, Google Gemini, GitHub Copilot, Amp, Droid, and Hermes** from local logs. New client formats are added in Tokcat's Rust usage reader.
+Tokcat tracks **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, and Hermes** from local logs. New client formats are added in Tokcat's Rust usage reader.
 
 ### Does Tokcat send my data anywhere?
 
-No. Tokcat's only network request is a check against `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json` for new releases. There is no telemetry, no analytics, no cloud sync, no account, and no third-party server. All token-usage data is read locally from session logs.
+Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It does make network requests for two explicit product functions: update checks against `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json`, and direct Codex/Claude OAuth quota lookups against those vendors when local credentials are available. Token-usage history is read locally from session logs.
 
 ### How is Tokcat different from CLI token-usage tools?
 
-Tokcat is a native macOS GUI and background reader: an animated menu-bar icon that shows cost, token count, or live tokens/min, a click-to-open frosted-glass dashboard with a GitHub-style heatmap, an interactive 3D tile graph, Live trace, per-client filters, streaks, and a System Settings-styled preferences panel. It does not require a separate token-usage CLI at runtime.
+Tokcat is a native macOS GUI and background reader: an animated menu-bar icon that shows cost, token count, or live tokens/min, a click-to-open frosted-glass dashboard with Overview/client tabs, 2D stacked token bars, an interactive 3D tile graph, agent-limit cards, Live session rows, streaks, themes, and a System Settings-styled preferences panel. It does not require a separate token-usage CLI at runtime.
 
 ### Does Tokcat run on Intel Macs or Windows?
 
@@ -258,16 +267,17 @@ The `dev` script runs the web frontend in a browser at `http://localhost:4061` a
 <summary><strong>Releasing a new version</strong></summary>
 <br>
 
+Releases are driven by GitHub Actions. Bump the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`, run `cargo check` from `src-tauri/`, commit as `Release Tokcat <version>`, push `main`, then push an annotated `v<version>` tag.
+
 ```sh
-# 1. bump version in package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml
-# 2. cargo check (refreshes Cargo.lock)
-# 3. commit, push to origin/main
-scripts/release.sh <version> "<release notes>"
+git tag -a v<VERSION> -m "<release notes>"
+git push origin main
+git push origin v<VERSION>
 ```
 
-`scripts/release.sh` builds the production app and DMG, strips the embedded `.VolumeIcon.icns` (which would otherwise show up in Finder when hidden files are visible), generates the updater signature, writes `latest.json`, tags the release, and uploads everything via `gh release create`.
+The release workflow builds the production app and DMG, strips the embedded `.VolumeIcon.icns` (which would otherwise show up in Finder when hidden files are visible), generates signed updater artifacts and `latest.json`, publishes the GitHub Release, and bumps `Casks/tokcat.rb` in [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat).
 
-After the release lands, bump `Casks/tokcat.rb` in [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat) so brew users see the new version.
+`scripts/release.sh` remains a local fallback for publishing the app release, but it does not update the Homebrew tap.
 
 </details>
 

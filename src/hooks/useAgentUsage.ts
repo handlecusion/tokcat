@@ -11,8 +11,25 @@ export function useAgentUsage(refreshKey: number): State {
   const [state, setState] = useState<State>({ payload: null, error: null })
 
   useEffect(() => {
-    if (!isTauri()) return
     let disposed = false
+    if (!isTauri()) {
+      ;(async () => {
+        try {
+          const res = await fetch('/api/agent-usage')
+          if (!res.ok) throw new Error(`agent usage ${res.status}`)
+          const payload = await res.json()
+          if (!disposed) setState({ payload, error: null })
+        } catch (err) {
+          if (!disposed) {
+            setState(s => ({ ...s, error: (err as Error).message ?? String(err) }))
+          }
+        }
+      })()
+      return () => {
+        disposed = true
+      }
+    }
+
     ;(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core')
