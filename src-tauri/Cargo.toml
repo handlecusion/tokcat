@@ -32,6 +32,7 @@ env_logger = "0.11"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
+tauri-plugin-global-shortcut = "2"
 # Bundled SQLite so we don't depend on the system libsqlite3; needed for
 # the Hermes Agent SQLite tail in usage_tail.rs (no schema migrations —
 # read-only queries only).

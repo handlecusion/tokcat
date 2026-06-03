@@ -120,6 +120,14 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Hide the popover from the frontend (⌘W / Esc) and return focus to the
+/// previously-frontmost app. Routed through the same helper as the tray-click
+/// and Ctrl+Cmd+T toggle so every explicit dismiss behaves identically.
+#[tauri::command]
+fn hide_popover(app: tauri::AppHandle) {
+    tray::hide_popover(&app);
+}
+
 #[tauri::command]
 fn push_dialog_shield(state: tauri::State<'_, Arc<AppState>>) {
     state.push_suppress_blur_hide();
@@ -299,6 +307,12 @@ pub fn run() {
     let state = AppState::new();
     let state_clone = state.clone();
 
+    // Ctrl+Cmd+T toggles the popover from anywhere — registered in setup, fired
+    // by the plugin handler below. Shortcut is Copy, so the same value is reused
+    // for both the handler match and the setup-time registration.
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+    let toggle_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SUPER), Code::KeyT);
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -307,11 +321,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, shortcut, event| {
+                    if shortcut == &toggle_shortcut && event.state() == ShortcutState::Pressed {
+                        tray::toggle_popover(app);
+                    }
+                })
+                .build(),
+        )
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
             get_graph,
             refresh_graph,
             quit_app,
+            hide_popover,
             push_dialog_shield,
             pop_dialog_shield,
             set_animate_tray,
@@ -331,6 +355,12 @@ pub fn run() {
         }
         let handle = app.handle().clone();
         tray::setup(&handle)?;
+        {
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            if let Err(e) = app.global_shortcut().register(toggle_shortcut) {
+                log::warn!("global shortcut register failed: {}", e);
+            }
+        }
         #[cfg(target_os = "macos")]
         if let Err(e) = native_tray::init() {
             log::warn!(
