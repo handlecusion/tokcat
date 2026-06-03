@@ -33,6 +33,9 @@
   --control-border: rgba(0, 0, 0, 0.08);
   --control-active-bg: rgba(255, 255, 255, 0.95);
   --control-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.06);
+
+  --kbd-pin-bg: rgba(255, 255, 255, 0.74);
+  --kbd-pin-border: rgba(0, 0, 0, 0.14);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -69,6 +72,9 @@
     --control-border: rgba(255, 255, 255, 0.10);
     --control-active-bg: rgba(255, 255, 255, 0.18);
     --control-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
+
+    --kbd-pin-bg: rgba(28, 28, 30, 0.74);
+    --kbd-pin-border: rgba(255, 255, 255, 0.18);
   }
 }
 
@@ -200,6 +206,7 @@ html, body, #root {
   overflow-x: auto;
 }
 .dash-tab {
+  position: relative;
   min-width: 0;
   height: 42px;
   display: inline-flex;
@@ -691,6 +698,7 @@ html, body, #root {
   gap: 6px;
 }
 .bar2d-viewtoggle {
+  position: relative;
   display: inline-flex;
   gap: 2px;
   padding: 2px;
@@ -900,6 +908,7 @@ html, body, #root {
 
 /* Settings button + panel */
 .settings-btn {
+  position: relative;
   background: var(--control-bg);
   border: 0.5px solid var(--control-border);
   color: var(--text-secondary);
@@ -1227,4 +1236,54 @@ html, body, #root {
   font-weight: 600;
   color: var(--blue);
   text-align: right;
+}
+
+/* Translucent shortcut-hint pins, overlaid on each control while Cmd is held. */
+.kbd-pin {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 20;
+  padding: 1.5px 5px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--kbd-pin-bg);
+  border: 0.5px solid var(--kbd-pin-border);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+  animation: kbd-pin-in 0.12s ease-out;
+}
+/* The tab strip clips vertical overflow (overflow-x: auto), so tab pins sit
+   inside the tab's top-right corner instead of overhanging it. */
+.dash-tab .kbd-pin {
+  top: 3px;
+  right: 3px;
+}
+/* The view toggle is short and sits at the card's right edge, so float its pin
+   fully above (not overhanging) and right-align it to stay inside the card. */
+.kbd-pin-toggle {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 3px);
+}
+@keyframes kbd-pin-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+/* Spins the header refresh icon while a manual refresh is in flight, so the
+   fetch is visibly "working" even when it returns in well under a second. */
+.refresh-spin {
+  transform-origin: 50% 50%;
+  animation: refresh-spin 0.7s linear infinite;
+}
+@keyframes refresh-spin {
+  to { transform: rotate(360deg); }
 }

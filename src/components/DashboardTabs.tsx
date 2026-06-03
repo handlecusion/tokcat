@@ -5,6 +5,7 @@ interface Props {
   clients: string[]
   active: string
   onChange: (tab: string) => void
+  kbdHints?: boolean
 }
 
 function ClientMark({ id }: { id: string }) {
@@ -26,7 +27,10 @@ function ClientMark({ id }: { id: string }) {
   )
 }
 
-export function DashboardTabs({ clients, active, onChange }: Props) {
+export function DashboardTabs({ clients, active, onChange, kbdHints }: Props) {
+  // ⌘1 = Overview, ⌘2… = clients, matching the keyboard handler in App. Only
+  // the first nine tabs get a hint since ⌘0 is unbound.
+  const hint = (idx: number) => (kbdHints && idx < 9 ? `⌘${idx + 1}` : null)
   return (
     <div className="dash-tabs" role="tablist" aria-label="Dashboard sections">
       <button
@@ -43,10 +47,12 @@ export function DashboardTabs({ clients, active, onChange }: Props) {
           <span />
         </span>
         <span>Overview</span>
+        {hint(0) && <span className="kbd-pin" aria-hidden="true">{hint(0)}</span>}
       </button>
-      {clients.map(id => {
+      {clients.map((id, i) => {
         const style = getClientStyle(id)
         const isActive = active === id
+        const h = hint(i + 1)
         return (
           <button
             key={id}
@@ -58,6 +64,7 @@ export function DashboardTabs({ clients, active, onChange }: Props) {
           >
             <ClientMark id={id} />
             <span>{style.displayName.replace(/\s+(CLI|Code|IDE)$/i, '')}</span>
+            {h && <span className="kbd-pin" aria-hidden="true">{h}</span>}
           </button>
         )
       })}
