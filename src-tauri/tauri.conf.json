@@ -25,6 +25,7 @@
         "alwaysOnTop": false,
         "skipTaskbar": true,
         "visible": false,
+        "visibleOnAllWorkspaces": true,
         "center": true,
         "shadow": true,
         "windowEffects": {

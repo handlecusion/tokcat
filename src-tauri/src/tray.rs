@@ -83,15 +83,21 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     if visible {
                         hide_popover(app);
                     } else {
+                        prepare_popover_window(&w);
                         let _ = position_window_under_tray(tray, &w);
                         let _ = w.show();
+                        bring_popover_to_front(&w);
                         let _ = w.set_focus();
+                        bring_popover_to_front(&w);
                         let _ = app.emit("popover-shown", ());
                     }
                 }
             }
         })
         .build(app)?;
+    if let Some(w) = app.get_webview_window("main") {
+        prepare_popover_window(&w);
+    }
     Ok(())
 }
 
@@ -130,14 +136,58 @@ pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
 
 fn show_popover<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
+        prepare_popover_window(&w);
         if let Some(tray) = app.tray_by_id("main-tray") {
             let _ = position_window_under_tray(&tray, &w);
         }
         let _ = w.show();
+        bring_popover_to_front(&w);
         let _ = w.set_focus();
+        bring_popover_to_front(&w);
         let _ = app.emit("popover-shown", ());
     }
 }
+
+#[cfg(target_os = "macos")]
+fn prepare_popover_window<R: Runtime>(window: &WebviewWindow<R>) {
+    use objc2_app_kit::{NSPopUpMenuWindowLevel, NSWindow, NSWindowCollectionBehavior};
+
+    let _ = window.set_visible_on_all_workspaces(true);
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+
+    let ns_window = unsafe { &*(ns_window.cast::<NSWindow>()) };
+    let behavior = ns_window.collectionBehavior()
+        | NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::CanJoinAllApplications
+        | NSWindowCollectionBehavior::FullScreenAuxiliary
+        | NSWindowCollectionBehavior::IgnoresCycle
+        | NSWindowCollectionBehavior::Transient;
+    ns_window.setCollectionBehavior(behavior);
+    ns_window.setLevel(NSPopUpMenuWindowLevel);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prepare_popover_window<R: Runtime>(window: &WebviewWindow<R>) {
+    let _ = window.set_visible_on_all_workspaces(true);
+}
+
+#[cfg(target_os = "macos")]
+fn bring_popover_to_front<R: Runtime>(window: &WebviewWindow<R>) {
+    use objc2_app_kit::NSWindow;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+
+    let ns_window = unsafe { &*(ns_window.cast::<NSWindow>()) };
+    ns_window.orderFrontRegardless();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bring_popover_to_front<R: Runtime>(_window: &WebviewWindow<R>) {}
 
 fn position_window_under_tray<R: Runtime>(
     tray: &tauri::tray::TrayIcon<R>,
@@ -166,8 +216,9 @@ fn position_window_under_tray<R: Runtime>(
         .unwrap_or(POPOVER_DEFAULT_H)
         .clamp(POPOVER_MIN_H, POPOVER_MAX_H);
 
-    // Clamp to monitor bounds
-    if let Ok(Some(monitor)) = window.current_monitor() {
+    // Clamp to the monitor that owns the tray icon, not the monitor remembered
+    // by the hidden popover window from its last Space.
+    if let Ok(Some(monitor)) = window.monitor_from_point(tray_x_logical, tray_y_logical) {
         let m_pos = monitor.position();
         let m_size = monitor.size();
         let m_scale = monitor.scale_factor();
