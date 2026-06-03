@@ -21,6 +21,7 @@ interface Props {
   accent: string
   /** When provided, the card leads with these token-usage totals (shown in both 2D and 3D). */
   stats?: Stats
+  kbdHints?: boolean
 }
 
 interface Segment {
@@ -95,6 +96,7 @@ export function UsageBarGraph2D({
   graphDark,
   accent,
   stats,
+  kbdHints,
 }: Props) {
   const [hover, setHover] = useState<HoverState | null>(null)
   const headSubtitle = stats && view === '3d' ? 'Full year' : subtitle
@@ -160,6 +162,7 @@ export function UsageBarGraph2D({
         </div>
         <div className="bar2d-head-right">
           <div className="bar2d-viewtoggle" role="group" aria-label="Chart view">
+            {kbdHints && <span className="kbd-pin kbd-pin-toggle" aria-hidden="true">⌘G</span>}
             <button
               type="button"
               className={`bar2d-viewbtn${view === '2d' ? ' is-active' : ''}`}

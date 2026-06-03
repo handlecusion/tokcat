@@ -59,6 +59,12 @@ export default function App() {
 
   const [aboutOpen, setAboutOpen] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  // True while the Cmd key is held — drives the translucent shortcut-hint pins
+  // overlaid on each actionable control (⌘R, ⌘,, ⌘1…, ⌘G).
+  const [cmdHeld, setCmdHeld] = useState(false)
+  // True while a manual refresh (button / ⌘R / tray) is in flight — spins the
+  // header refresh icon so the fetch is visible even when it returns instantly.
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     saveSettings(settings)
@@ -150,16 +156,25 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [])
 
-  // Manual refresh from tray menu — bypasses cache.
+  // Manual refresh from the header button, ⌘R, or the tray menu — bypasses
+  // cache. Drives `refreshing` for the whole fetch so the header icon spins;
+  // refresh_graph holds a ~450ms floor, so the spin is always visible.
   useEffect(() => {
     if (refreshTick === 0) return
-    if (!isTauri()) return
+    setRefreshing(true)
+    if (!isTauri()) {
+      const id = window.setTimeout(() => setRefreshing(false), 600)
+      return () => window.clearTimeout(id)
+    }
+    let done = false
     ;(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core')
         await invoke('refresh_graph', { year })
       } catch {}
+      if (!done) setRefreshing(false)
     })()
+    return () => { done = true }
   }, [refreshTick, year])
 
   const allYears = useMemo(() => {
@@ -184,6 +199,103 @@ export default function App() {
     if (activeTab === 'overview') return
     if (!dashboardClients.includes(activeTab)) setActiveTab('overview')
   }, [activeTab, dashboardClients])
+
+  // Internal keyboard shortcuts. The global Ctrl+Cmd+T popover toggle is
+  // registered natively in Rust; everything here is cmd-only and cmd-exclusive
+  // (ctrl/alt/shift held → ignored) so it never collides with that global key.
+  useEffect(() => {
+    const tabs = ['overview', ...dashboardClients]
+
+    async function hidePopover() {
+      if (!isTauri()) return
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        await invoke('hide_popover')
+      } catch {}
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Esc closes the top-most modal first, else hides the popover. Skipped
+      // when a form control is focused so Esc can dismiss its native dropdown.
+      if (e.key === 'Escape') {
+        const tag = document.activeElement?.tagName
+        if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return
+        if (settingsOpen) { setSettingsOpen(false); e.preventDefault(); return }
+        if (aboutOpen) { setAboutOpen(false); e.preventDefault(); return }
+        void hidePopover()
+        e.preventDefault()
+        return
+      }
+
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+      const k = e.key.toLowerCase()
+
+      if (k >= '1' && k <= '9') {
+        const idx = Number(k) - 1
+        if (idx < tabs.length) { setActiveTab(tabs[idx]); e.preventDefault() }
+        return
+      }
+
+      switch (k) {
+        case ',':
+          setSettingsOpen(true); e.preventDefault(); break
+        case 'r':
+          setRefreshTick(t => t + 1); e.preventDefault(); break
+        case 'w':
+          // Mirror Esc: close the top-most modal first, only hide the popover
+          // when nothing is open over it.
+          if (settingsOpen) setSettingsOpen(false)
+          else if (aboutOpen) setAboutOpen(false)
+          else void hidePopover()
+          e.preventDefault(); break
+        case 'q':
+          if (isTauri()) {
+            ;(async () => {
+              try {
+                const { invoke } = await import('@tauri-apps/api/core')
+                await invoke('quit_app')
+              } catch {}
+            })()
+          }
+          e.preventDefault(); break
+        case 'g':
+          setUsageView(v => (v === '2d' ? '3d' : '2d')); e.preventDefault(); break
+        case 'u':
+          if (isTauri()) void checkForUpdatesInteractive()
+          e.preventDefault(); break
+        case '[': {
+          const i = tabs.indexOf(activeTab)
+          setActiveTab(tabs[(i - 1 + tabs.length) % tabs.length]); e.preventDefault(); break
+        }
+        case ']': {
+          const i = tabs.indexOf(activeTab)
+          setActiveTab(tabs[(i + 1) % tabs.length]); e.preventDefault(); break
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [dashboardClients, activeTab, settingsOpen, aboutOpen])
+
+  // Track the Cmd key for the shortcut-hint overlay. keyup can be missed if the
+  // app loses focus mid-hold (e.g. Cmd+Tab), so blur/visibilitychange force the
+  // pins off — otherwise they'd stay stuck after switching away.
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => { if (e.key === 'Meta') setCmdHeld(true) }
+    const onUp = (e: KeyboardEvent) => { if (e.key === 'Meta') setCmdHeld(false) }
+    const reset = () => setCmdHeld(false)
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    window.addEventListener('blur', reset)
+    document.addEventListener('visibilitychange', reset)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+      window.removeEventListener('blur', reset)
+      document.removeEventListener('visibilitychange', reset)
+    }
+  }, [])
 
   const overviewClientSet = useMemo(() => new Set(presentClients), [presentClients])
   const activeClientIds = useMemo(
@@ -357,8 +469,10 @@ export default function App() {
                 onThemeChange={(t) => setTheme(t as ThemeName)}
                 onRefresh={() => setRefreshTick(t => t + 1)}
                 onOpenSettings={() => setSettingsOpen(true)}
+                kbdHints={cmdHeld}
+                refreshing={refreshing}
               />
-              <DashboardTabs clients={dashboardClients} active={activeTab} onChange={setActiveTab} />
+              <DashboardTabs clients={dashboardClients} active={activeTab} onChange={setActiveTab} kbdHints={cmdHeld} />
               {activeTab === 'overview' ? (
                 <div className="dashboard-stack">
                   <UsageBarGraph2D
@@ -373,6 +487,7 @@ export default function App() {
                     graphDark={palette.graphDark}
                     accent={mode.accent}
                     stats={overviewStats}
+                    kbdHints={cmdHeld}
                   />
                   <AgentLimitsCard clients={dashboardClients} trace={trace} agentUsage={agentUsage.payload} />
                   <UsageTraceCard
@@ -404,6 +519,7 @@ export default function App() {
                     graphDark={palette.graphDark}
                     accent={mode.accent}
                     stats={activeStats}
+                    kbdHints={cmdHeld}
                   />
                   <StreaksCard longest={activeStats.streaks.longest} current={activeStats.streaks.current} />
                 </div>

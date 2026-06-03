@@ -81,7 +81,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 if let Some(w) = app.get_webview_window("main") {
                     let visible = w.is_visible().unwrap_or(false);
                     if visible {
-                        let _ = w.hide();
+                        hide_popover(app);
                     } else {
                         let _ = position_window_under_tray(tray, &w);
                         let _ = w.show();
@@ -93,6 +93,39 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// Hide the popover and hand keyboard focus back to the app that was in front
+/// before it opened. Plain `w.hide()` (orderOut) leaves Tokcat the active
+/// accessory app with no window, so focus lands nowhere; `app.hide()` (NSApp
+/// hide) deactivates Tokcat and reactivates the previously-frontmost app. The
+/// `w.hide()` runs first so the toggle's `is_visible()` check is reliable
+/// regardless of how NSApp hide reports window visibility. Used by every
+/// explicit dismiss (Ctrl+Cmd+T, tray-click toggle, ⌘W, Esc) but not the
+/// blur-hide, where focus has already moved to whatever stole it.
+pub fn hide_popover<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.hide();
+}
+
+/// Show the popover under the tray if hidden, hide it if visible. Mirrors the
+/// left-click tray toggle so the global shortcut (Ctrl+Cmd+T) behaves the same.
+pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_visible().unwrap_or(false) {
+            hide_popover(app);
+        } else {
+            if let Some(tray) = app.tray_by_id("main-tray") {
+                let _ = position_window_under_tray(&tray, &w);
+            }
+            let _ = w.show();
+            let _ = w.set_focus();
+            let _ = app.emit("popover-shown", ());
+        }
+    }
 }
 
 fn show_popover<R: Runtime>(app: &AppHandle<R>) {
