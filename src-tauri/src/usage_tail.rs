@@ -211,16 +211,20 @@ impl UsageTailer {
             .and_then(|f| f.codex_model.clone());
 
         let mut consumed: u64 = 0;
-        for line in buf.split(|&b| b == b'\n') {
-            consumed += line.len() as u64;
-            let has_terminator = consumed < buf.len() as u64;
-            if !has_terminator {
-                break;
-            }
-            consumed += 1;
+        for chunk in buf.split_inclusive(|&b| b == b'\n') {
+            let has_terminator = chunk.ends_with(b"\n");
+            let line = if has_terminator {
+                &chunk[..chunk.len().saturating_sub(1)]
+            } else {
+                chunk
+            };
             let trimmed = trim_ascii(line);
             if trimmed.is_empty() {
+                consumed += chunk.len() as u64;
                 continue;
+            }
+            if !has_terminator && serde_json::from_slice::<serde_json::Value>(trimmed).is_err() {
+                break;
             }
             let recorded = match client {
                 ClientKind::Claude => self.parse_claude_line(path, trimmed),
@@ -229,6 +233,7 @@ impl UsageTailer {
             if recorded {
                 added += 1;
             }
+            consumed += chunk.len() as u64;
         }
 
         let new_offset = start + consumed;
@@ -693,5 +698,74 @@ fn sidechain_label_from_path(path: &Path) -> String {
         format!("subagent:{}", rest)
     } else {
         format!("subagent:{}", stem)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_jsonl_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tokcat-usage-tail-{}-{}-{}.jsonl",
+            name,
+            std::process::id(),
+            now_ms()
+        ))
+    }
+
+    fn claude_assistant_line(message_id: &str, request_id: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"{}","requestId":"{}","message":{{"id":"{}","model":"claude-sonnet-4-20250514","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}}}}"#,
+            chrono::Utc::now().to_rfc3339(),
+            request_id,
+            message_id
+        )
+    }
+
+    #[test]
+    fn claude_tail_counts_final_line_without_newline() {
+        let path = temp_jsonl_path("no-newline");
+        let line = claude_assistant_line("msg_no_newline", "req_no_newline");
+        fs::write(&path, line).unwrap();
+
+        let tailer = UsageTailer::new();
+        let size = fs::metadata(&path).unwrap().len();
+        let added = tailer.read_growth(&path, ClientKind::Claude, 0, size, now_ms());
+
+        assert_eq!(added, 1);
+        let trace = tailer.trace(3600);
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].client, CLIENT_CLAUDE);
+        assert_eq!(trace[0].agent, "main");
+        assert_eq!(trace[0].model, "claude-sonnet-4");
+        assert_eq!(trace[0].tokens, 20);
+        assert_eq!(trace[0].messages, 1);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn tail_keeps_partial_final_line_for_next_tick() {
+        let path = temp_jsonl_path("partial");
+        fs::write(&path, r#"{"type":"assistant""#).unwrap();
+
+        let tailer = UsageTailer::new();
+        let size = fs::metadata(&path).unwrap().len();
+        let added = tailer.read_growth(&path, ClientKind::Claude, 0, size, now_ms());
+
+        assert_eq!(added, 0);
+        assert_eq!(tailer.files.lock().get(&path).unwrap().offset, 0);
+
+        let line = claude_assistant_line("msg_partial", "req_partial");
+        fs::write(&path, line).unwrap();
+        let size = fs::metadata(&path).unwrap().len();
+        let start = tailer.files.lock().get(&path).unwrap().offset;
+        let added = tailer.read_growth(&path, ClientKind::Claude, start, size, now_ms());
+
+        assert_eq!(added, 1);
+        assert_eq!(tailer.trace(3600)[0].tokens, 20);
+
+        let _ = fs::remove_file(path);
     }
 }
