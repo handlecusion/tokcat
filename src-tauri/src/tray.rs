@@ -124,11 +124,14 @@ pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
         if w.is_visible().unwrap_or(false) {
             hide_popover(app);
         } else {
+            prepare_popover_window(&w);
             if let Some(tray) = app.tray_by_id("main-tray") {
                 let _ = position_window_under_tray(&tray, &w);
             }
             let _ = w.show();
+            bring_popover_to_front(&w);
             let _ = w.set_focus();
+            bring_popover_to_front(&w);
             let _ = app.emit("popover-shown", ());
         }
     }
