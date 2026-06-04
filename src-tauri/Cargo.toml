@@ -1,6 +1,6 @@
 [package]
 name = "tokcat"
-version = "0.1.28"
+version = "0.1.29"
 edition = "2021"
 description = "Native macOS menubar dashboard for local AI token usage"
 authors = ["handlecusion"]
