@@ -468,6 +468,10 @@ fn load_claude_credentials() -> Result<ClaudeCredentials, String> {
         return Ok(credentials);
     }
 
+    if let Some(raw) = load_claude_credentials_from_keychain()? {
+        return parse_claude_credentials_data(&raw);
+    }
+
     let credentials_path = claude_credentials_path();
     match fs::read_to_string(&credentials_path) {
         Ok(raw) => return parse_claude_credentials_data(&raw),
@@ -479,10 +483,6 @@ fn load_claude_credentials() -> Result<ClaudeCredentials, String> {
                 error
             ));
         }
-    }
-
-    if let Some(raw) = load_claude_credentials_from_keychain()? {
-        return parse_claude_credentials_data(&raw);
     }
 
     Err("Claude OAuth credentials not found. Run `claude` to authenticate.".to_string())
