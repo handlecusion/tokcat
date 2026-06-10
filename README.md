@@ -14,7 +14,7 @@
   <a href="https://github.com/handlecusion/tokcat/stargazers"><img src="https://img.shields.io/github/stars/handlecusion/tokcat?style=flat-square" alt="Stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence"></a>
   <img src="https://img.shields.io/badge/macOS-11%2B-black?style=flat-square&logo=apple" alt="macOS 11+">
-  <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-success?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-arm64%20%2F%20x64-success?style=flat-square" alt="Apple Silicon and Intel">
   <img src="https://img.shields.io/badge/built%20with-Tauri%202-FFC131?style=flat-square&logo=tauri&logoColor=black" alt="Tauri 2">
 </p>
 
@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no Tokcat account — and surfaces **9 AI coding clients** (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes) in an Overview dashboard plus per-client tabs. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, or icon-only mode; clicking opens a frosted-glass popover with 2D stacked token bars, an interactive 3D contribution graph, OAuth agent-limit cards, Live session throughput, streak summaries, theme selection, and settings. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as a DMG for **Apple Silicon, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
+**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. Built with **Tauri 2** (Rust shell + React/Vite frontend), Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no Tokcat account — and surfaces **9 AI coding clients** (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes) in an Overview dashboard plus per-client tabs. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, or icon-only mode; clicking opens a frosted-glass popover with 2D stacked token bars, an interactive 3D contribution graph, OAuth agent-limit cards, Live session throughput, streak summaries, theme selection, and settings. Tokcat refreshes local usage data in-process, checks for signed updates every **30 minutes**, and ships as DMGs for **Apple Silicon and Intel Macs, macOS 11+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -44,7 +44,8 @@ That's it. The fully-qualified `user/tap/cask` form auto-taps `handlecusion/home
 
 The in-app updater checks for new releases on launch and again every 30 minutes; signed `.tar.gz` artifacts are verified against the embedded public key before install.
 
-> Prefer a one-off DMG? Grab `Tokcat_<version>_aarch64.dmg` from
+> Prefer a one-off DMG? Grab `Tokcat_<version>_aarch64.dmg` for Apple Silicon
+> or `Tokcat_<version>_x64.dmg` for Intel from
 > [Releases](https://github.com/handlecusion/tokcat/releases). No separate
 > token-usage CLI is required.
 
@@ -223,7 +224,7 @@ open -na /Applications/Tokcat.app
 
 ### What is Tokcat?
 
-Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a DMG from GitHub Releases, and targets Apple Silicon Macs running macOS 11 or newer.
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as DMGs from GitHub Releases, and targets Apple Silicon and Intel Macs running macOS 11 or newer.
 
 ### How much does Tokcat cost?
 
@@ -243,7 +244,7 @@ Tokcat is a native macOS GUI and background reader: an animated menu-bar icon th
 
 ### Does Tokcat run on Intel Macs or Windows?
 
-Tokcat ships only for **Apple Silicon (arm64) on macOS 11 or later**. There is no Intel x86_64 build and no Windows or Linux build.
+Tokcat ships for **Apple Silicon (arm64) and Intel (x86_64) Macs on macOS 11 or later**. Windows support lives in the separate `handlecusion/tokcat-window` port repo; Linux is not supported.
 
 ### How do I uninstall Tokcat?
 
@@ -275,7 +276,7 @@ git push origin main
 git push origin v<VERSION>
 ```
 
-The release workflow builds the production app and DMG, strips the embedded `.VolumeIcon.icns` (which would otherwise show up in Finder when hidden files are visible), generates signed updater artifacts and `latest.json`, publishes the GitHub Release, and bumps `Casks/tokcat.rb` in [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat).
+The release workflow builds Apple Silicon and Intel DMGs, strips the embedded `.VolumeIcon.icns` (which would otherwise show up in Finder when hidden files are visible), generates signed updater artifacts and multi-platform `latest.json`, publishes the GitHub Release, and bumps `Casks/tokcat.rb` in [`handlecusion/homebrew-tokcat`](https://github.com/handlecusion/homebrew-tokcat).
 
 `scripts/release.sh` remains a local fallback for publishing the app release, but it does not update the Homebrew tap.
 
@@ -306,5 +307,5 @@ MIT. See [LICENSE](LICENSE).
 <p align="center">
 <br>
 <code>brew install --cask handlecusion/tokcat/tokcat</code><br>
-<sub>macOS 11+ · Apple Silicon · Tauri 2 · React / Vite · MIT</sub>
+<sub>macOS 11+ · Apple Silicon + Intel · Tauri 2 · React / Vite · MIT</sub>
 </p>
