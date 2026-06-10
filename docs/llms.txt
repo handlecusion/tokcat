@@ -1,6 +1,6 @@
 # Tokcat
 
-> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon, macOS 11+. MIT licensed.
+> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon and Intel Macs, macOS 11+. MIT licensed.
 
 ## Install
 

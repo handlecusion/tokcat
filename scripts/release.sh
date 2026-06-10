@@ -34,65 +34,101 @@ cd "$REPO_ROOT"
 
 # Ensure version files match the requested version.
 PKG_VER="$(node -p "require('./package.json').version")"
-if [[ "$PKG_VER" != "$VERSION" ]]; then
-  echo "package.json version is $PKG_VER, expected $VERSION" >&2
+CARGO_VER="$(grep -E '^version = ' src-tauri/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')"
+TAURI_VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+if [[ "$PKG_VER" != "$VERSION" || "$CARGO_VER" != "$VERSION" || "$TAURI_VER" != "$VERSION" ]]; then
+  echo "version mismatch: expected $VERSION package.json=$PKG_VER Cargo.toml=$CARGO_VER tauri.conf.json=$TAURI_VER" >&2
   exit 1
 fi
 
 TAG="v$VERSION"
-BUNDLE_DIR="src-tauri/target/release/bundle"
-DMG="$BUNDLE_DIR/dmg/Tokcat_${VERSION}_aarch64.dmg"
-APP_TGZ="$BUNDLE_DIR/macos/Tokcat.app.tar.gz"
-APP_SIG="$BUNDLE_DIR/macos/Tokcat.app.tar.gz.sig"
+DOWNLOAD_BASE="https://github.com/handlecusion/tokcat/releases/download/$TAG"
+RELEASE_DIR="src-tauri/target/release-artifacts"
+LATEST_JSON="$RELEASE_DIR/latest.json"
+
+strip_volume_icon() {
+  local dmg="$1"
+  echo "==> Stripping .VolumeIcon.icns from $dmg"
+  local dmg_rw="${dmg%.dmg}.rw.dmg"
+  local dmg_mnt
+  dmg_mnt="$(mktemp -d)"
+  hdiutil convert "$dmg" -format UDRW -o "$dmg_rw" -ov >/dev/null
+  hdiutil attach -nobrowse -mountpoint "$dmg_mnt" "$dmg_rw" >/dev/null
+  rm -f "$dmg_mnt/.VolumeIcon.icns"
+  SetFile -a c "$dmg_mnt" 2>/dev/null || true
+  hdiutil detach "$dmg_mnt" >/dev/null
+  rmdir "$dmg_mnt" 2>/dev/null || true
+  hdiutil convert "$dmg_rw" -format UDZO -imagekey zlib-level=9 -o "$dmg" -ov >/dev/null
+  rm -f "$dmg_rw"
+}
+
+build_arch() {
+  local rust_target="$1"
+  local platform_key="$2"
+  local asset_arch="$3"
+
+  echo "==> Building $rust_target"
+  rustup target add "$rust_target"
+  TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")" \
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+    pnpm tauri build --target "$rust_target"
+
+  local bundle_dir="src-tauri/target/${rust_target}/release/bundle"
+  local dmg
+  dmg="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name "Tokcat_${VERSION}_*.dmg" -print -quit)"
+  local app_tgz="$bundle_dir/macos/Tokcat.app.tar.gz"
+  local app_sig="$bundle_dir/macos/Tokcat.app.tar.gz.sig"
+  for f in "$dmg" "$app_tgz" "$app_sig"; do
+    if [[ ! -f "$f" ]]; then
+      echo "expected artifact missing: $f" >&2
+      exit 1
+    fi
+  done
+
+  strip_volume_icon "$dmg"
+
+  mkdir -p "$RELEASE_DIR"
+  cp "$dmg" "$RELEASE_DIR/Tokcat_${VERSION}_${asset_arch}.dmg"
+  cp "$app_tgz" "$RELEASE_DIR/Tokcat_${VERSION}_${asset_arch}.app.tar.gz"
+  cp "$app_sig" "$RELEASE_DIR/Tokcat_${VERSION}_${asset_arch}.app.tar.gz.sig"
+  shasum -a 256 "$RELEASE_DIR/Tokcat_${VERSION}_${asset_arch}.dmg" > "$RELEASE_DIR/${platform_key}.dmg.sha256"
+}
 
 echo "==> Building release with updater artifacts"
-TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY_PATH")" \
-  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-  pnpm tauri build
+mkdir -p "$RELEASE_DIR"
+find "$RELEASE_DIR" -mindepth 1 -maxdepth 1 -exec rm -R {} +
+build_arch "aarch64-apple-darwin" "darwin-aarch64" "aarch64"
+build_arch "x86_64-apple-darwin" "darwin-x86_64" "x64"
 
-for f in "$DMG" "$APP_TGZ" "$APP_SIG"; do
-  if [[ ! -f "$f" ]]; then
-    echo "expected artifact missing: $f" >&2
-    exit 1
-  fi
-done
-
-# Tauri's dmg bundler writes a hidden .VolumeIcon.icns into the disk image.
-# Users who have "show hidden files" enabled in Finder (Cmd+Shift+.) end up
-# seeing it next to the app, which looks like a stray cache file. Strip it.
-echo "==> Stripping .VolumeIcon.icns from $DMG"
-DMG_RW="${DMG%.dmg}.rw.dmg"
-DMG_MNT="$(mktemp -d)"
-hdiutil convert "$DMG" -format UDRW -o "$DMG_RW" -ov >/dev/null
-hdiutil attach -nobrowse -mountpoint "$DMG_MNT" "$DMG_RW" >/dev/null
-rm -f "$DMG_MNT/.VolumeIcon.icns"
-SetFile -a c "$DMG_MNT" 2>/dev/null || true
-hdiutil detach "$DMG_MNT" >/dev/null
-rmdir "$DMG_MNT" 2>/dev/null || true
-hdiutil convert "$DMG_RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" -ov >/dev/null
-rm -f "$DMG_RW"
-
-SIGNATURE="$(cat "$APP_SIG")"
+ARM_SIG="$(cat "$RELEASE_DIR/Tokcat_${VERSION}_aarch64.app.tar.gz.sig")"
+INTEL_SIG="$(cat "$RELEASE_DIR/Tokcat_${VERSION}_x64.app.tar.gz.sig")"
+SHA256_ARM="$(awk '{print $1}' "$RELEASE_DIR/darwin-aarch64.dmg.sha256")"
+SHA256_INTEL="$(awk '{print $1}' "$RELEASE_DIR/darwin-x86_64.dmg.sha256")"
 PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-DOWNLOAD_BASE="https://github.com/handlecusion/tokcat/releases/download/$TAG"
 
-LATEST_JSON="$BUNDLE_DIR/latest.json"
-cat > "$LATEST_JSON" <<EOF
-{
-  "version": "$VERSION",
-  "notes": $(printf '%s' "$NOTES" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'),
-  "pub_date": "$PUB_DATE",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "$SIGNATURE",
-      "url": "$DOWNLOAD_BASE/Tokcat.app.tar.gz"
+jq -n \
+  --arg version "$VERSION" \
+  --arg notes "$NOTES" \
+  --arg pub_date "$PUB_DATE" \
+  --arg arm_signature "$ARM_SIG" \
+  --arg arm_url "$DOWNLOAD_BASE/Tokcat_${VERSION}_aarch64.app.tar.gz" \
+  --arg intel_signature "$INTEL_SIG" \
+  --arg intel_url "$DOWNLOAD_BASE/Tokcat_${VERSION}_x64.app.tar.gz" \
+  '{
+    version: $version,
+    notes: $notes,
+    pub_date: $pub_date,
+    platforms: {
+      "darwin-aarch64": {signature: $arm_signature, url: $arm_url},
+      "darwin-x86_64": {signature: $intel_signature, url: $intel_url}
     }
-  }
-}
-EOF
+  }' > "$LATEST_JSON"
 
 echo "==> latest.json"
 cat "$LATEST_JSON"
+echo "==> DMG sha256"
+echo "darwin-aarch64 $SHA256_ARM"
+echo "darwin-x86_64 $SHA256_INTEL"
 
 # Tag must already exist (or be created here). We assume the commit is pushed.
 if ! git rev-parse "$TAG" >/dev/null 2>&1; then
@@ -103,11 +139,17 @@ fi
 
 echo "==> Creating GitHub release"
 gh release create "$TAG" \
-  "$DMG" \
-  "$APP_TGZ" \
-  "$APP_SIG" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_aarch64.dmg" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_x64.dmg" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_aarch64.app.tar.gz" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_aarch64.app.tar.gz.sig" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_x64.app.tar.gz" \
+  "$RELEASE_DIR/Tokcat_${VERSION}_x64.app.tar.gz.sig" \
   "$LATEST_JSON" \
   --title "Tokcat $VERSION" \
   --notes "$NOTES"
 
 echo "==> Done: https://github.com/handlecusion/tokcat/releases/tag/$TAG"
+echo "==> Manual tap update still required:"
+echo "    arm sha256:   $SHA256_ARM"
+echo "    intel sha256: $SHA256_INTEL"

@@ -46,7 +46,7 @@
         ],
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "Menu bar utility",
-        "operatingSystem": "macOS 11+ (Apple Silicon arm64)",
+        "operatingSystem": "macOS 11+ (Apple Silicon arm64 and Intel x86_64)",
         "url": "https://github.com/handlecusion/tokcat",
         "sameAs": [
           "https://github.com/handlecusion/tokcat",
@@ -107,7 +107,7 @@
             "name": "What is Tokcat?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases for Apple Silicon Macs on macOS 11 or later."
+              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases for Apple Silicon and Intel Macs on macOS 11 or later."
             }
           },
           {
@@ -147,7 +147,7 @@
             "name": "Does Tokcat run on Intel Macs or Windows?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat ships only for Apple Silicon (arm64) on macOS 11 or later. There is no Intel x86_64 build and no Windows or Linux build."
+              "text": "Tokcat ships for Apple Silicon (arm64) and Intel (x86_64) Macs on macOS 11 or later. Windows support lives in the separate handlecusion/tokcat-window port repo; Linux is not supported."
             }
           }
         ]
@@ -208,7 +208,7 @@
         <dl class="hero-stats" aria-label="Tokcat highlights">
           <div>
             <dt>Runtime</dt>
-            <dd>macOS 11+ arm64</dd>
+            <dd>macOS 11+ arm64/x64</dd>
           </div>
           <div>
             <dt>Data path</dt>
@@ -372,7 +372,7 @@
           </details>
           <details>
             <summary>Does Tokcat run on Intel Macs or Windows?</summary>
-            <p>Tokcat ships for Apple Silicon Macs on macOS 11 or newer. There is no Intel, Windows, or Linux build.</p>
+            <p>Tokcat ships for Apple Silicon and Intel Macs on macOS 11 or newer. Windows support lives in the separate <code>handlecusion/tokcat-window</code> port repo; Linux is not supported.</p>
           </details>
         </div>
       </div>
