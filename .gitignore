@@ -5,6 +5,7 @@ dist
 .env
 .env.*
 .vite
+pnpm-lock.yaml
 
 # Tauri
 src-tauri/target
