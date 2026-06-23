@@ -1158,6 +1158,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_tile_gated_on_auth_json_presence() {
+        // The agent-limits panel hides Codex unless it's actually set up. The
+        // gate is the presence of auth.json under CODEX_HOME — a missing file
+        // means "not installed / not logged in" and the tile stays hidden.
+        let dir =
+            std::env::temp_dir().join(format!("tokcat-codex-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("CODEX_HOME", &dir);
+
+        assert!(
+            !codex_is_configured(),
+            "no auth.json under CODEX_HOME => Codex not configured"
+        );
+
+        std::fs::write(dir.join("auth.json"), "{}").unwrap();
+        assert!(
+            codex_is_configured(),
+            "auth.json present => Codex configured"
+        );
+
+        std::env::remove_var("CODEX_HOME");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn maps_codex_primary_and_secondary_windows() {
         let now = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
         let rate_limit = CodexRateLimit {
