@@ -408,6 +408,29 @@ export default function App() {
     })()
   }, [settings.animationStyle])
 
+  // Push the Cursor-usage opt-in to the backend. On enable the backend fetches
+  // once; refresh the graph so the new data shows immediately. If the fetch
+  // fails (Cursor signed out / offline), revert the toggle so it reflects what
+  // actually happened.
+  useEffect(() => {
+    if (!isTauri()) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        await invoke('set_cursor_usage_enabled', { enabled: settings.cursorUsage })
+        if (!cancelled && settings.cursorUsage) setRefreshTick(t => t + 1)
+      } catch (e) {
+        if (cancelled) return
+        console.error('Cursor usage fetch failed:', e)
+        if (settings.cursorUsage) setSettings(s => ({ ...s, cursorUsage: false }))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [settings.cursorUsage])
+
   // Resize the native window to fit the current content height. The trace
   // card's row count changes as buckets come and go; without this the
   // window either crops the trace or shows trailing whitespace.

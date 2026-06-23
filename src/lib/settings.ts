@@ -18,6 +18,10 @@ export interface Settings {
   // When true, the Live trace card splits rows by (client, agent, model);
   // otherwise rows collapse to one per client.
   detailedTrace: boolean
+  // Opt-in: fetch Cursor usage from cursor.com. Off by default because, unlike
+  // every other client, Cursor has no local token/cost ledger — enabling it
+  // makes a network request authenticated with your Cursor session.
+  cursorUsage: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -26,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   animateTray: true,
   animationStyle: 'cat',
   detailedTrace: false,
+  cursorUsage: false,
 }
 
 export const ANIMATION_STYLE_LABELS: Record<AnimationStyle, string> = {

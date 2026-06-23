@@ -1,5 +1,6 @@
 mod animation;
 mod agent_usage;
+mod cursor_usage;
 #[cfg(target_os = "macos")]
 mod native_tray;
 mod state;
@@ -85,6 +86,13 @@ async fn refresh_graph(
     let state_inner: &Arc<AppState> = &*state;
     let _guard = RefreshGuard { state: state_inner };
 
+    // Opt-in: refresh the Cursor usage cache before reading the graph so the
+    // rebuild below sees the latest events. Best-effort — a fetch failure
+    // (Cursor signed out, offline) must not block the local graph refresh.
+    if state.is_cursor_usage_enabled() {
+        let _ = cursor_usage::refresh_cache().await;
+    }
+
     let year_clone = year.clone();
     let data = async_runtime::spawn_blocking(move || usage_graph::run(&year_clone))
         .await
@@ -150,6 +158,26 @@ fn set_animation_style(style: String, state: tauri::State<'_, Arc<AppState>>) {
         _ => 0u32,
     };
     state.set_animation_style(code);
+}
+
+/// Toggle the opt-in Cursor usage fetch. On enable we fetch once immediately so
+/// the user sees data without waiting for the next refresh tick; the returned
+/// error (if any) lets the frontend surface why it couldn't (Cursor signed out,
+/// offline). The frontend triggers a graph refresh after this resolves.
+#[tauri::command]
+async fn set_cursor_usage_enabled(
+    enabled: bool,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    state.set_cursor_usage_enabled(enabled);
+    if enabled {
+        cursor_usage::refresh_cache().await?;
+    } else {
+        // Opting out hides Cursor: drop the cache so parse_cursor stops
+        // surfacing stale data on the next graph rebuild.
+        cursor_usage::clear_cache();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -220,6 +248,11 @@ fn spawn_refresh_loop(app: tauri::AppHandle, state: Arc<AppState>) {
     async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(REFRESH_SECS)).await;
+            // Opt-in: pull fresh Cursor usage once per cycle (covers every year)
+            // before the per-year graph rebuilds below. Best-effort.
+            if state.is_cursor_usage_enabled() {
+                let _ = cursor_usage::refresh_cache().await;
+            }
             let years = state.known_years();
             for year in years {
                 let s = state.clone();
@@ -340,6 +373,7 @@ pub fn run() {
             pop_dialog_shield,
             set_animate_tray,
             set_animation_style,
+            set_cursor_usage_enabled,
             get_usage_trace,
             get_tokens_per_min,
             get_agent_usage,

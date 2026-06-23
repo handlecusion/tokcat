@@ -793,9 +793,20 @@ fn parse_cursor() -> Vec<UsageMessage> {
     let Some(home) = home_dir() else {
         return Vec::new();
     };
-    // Cursor's usage source is still the local compatibility cache produced by
-    // older Tokcat/tokscale setups. Reading it avoids dropping historical data.
     let root = home.join(".config").join("tokscale").join("cursor-cache");
+    // Preferred source: the JSON cache written by the opt-in cursor_usage
+    // fetcher (per-event tokens + cost from cursor.com). When present it
+    // supersedes the legacy CSV — same data, richer — so we don't read both
+    // and double-count.
+    let json_cache = root.join("tokcat-events.json");
+    if json_cache.is_file() {
+        let msgs = parse_cursor_cache_json(&json_cache);
+        if !msgs.is_empty() {
+            return msgs;
+        }
+    }
+    // Fallback: the local compatibility CSV cache produced by older
+    // Tokcat/tokscale setups. Reading it avoids dropping historical data.
     collect_files(&root, |p| {
         p.file_name().and_then(|s| s.to_str()).is_some_and(|name| {
             name == "usage.csv" || (name.starts_with("usage.") && name.ends_with(".csv"))
@@ -804,6 +815,54 @@ fn parse_cursor() -> Vec<UsageMessage> {
     .into_iter()
     .flat_map(|p| parse_cursor_file(&p))
     .collect()
+}
+
+fn parse_cursor_cache_json(path: &Path) -> Vec<UsageMessage> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    #[derive(serde::Deserialize)]
+    struct Cache {
+        events: Vec<Event>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Event {
+        timestamp_ms: i64,
+        model: String,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cost: f64,
+    }
+    let Ok(cache) = serde_json::from_str::<Cache>(&content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in cache.events {
+        if e.timestamp_ms <= 0 {
+            continue;
+        }
+        let mut msg = UsageMessage::new(
+            "cursor",
+            e.model.as_str(),
+            infer_provider(&e.model),
+            e.timestamp_ms,
+            TokenBreakdown {
+                input: e.input_tokens.max(0),
+                output: e.output_tokens.max(0),
+                cache_read: e.cache_read_tokens.max(0),
+                cache_write: 0,
+                reasoning: 0,
+            },
+            e.cost.max(0.0),
+        );
+        msg.dedup_key = Some(format!(
+            "cursor:{}:{}:{}",
+            e.timestamp_ms, e.input_tokens, e.output_tokens
+        ));
+        out.push(msg);
+    }
+    out
 }
 
 fn parse_cursor_file(path: &Path) -> Vec<UsageMessage> {
@@ -2272,6 +2331,38 @@ mod tests {
             "claude-sonnet-4-5",
             "anthropic",
             Price::new(3.0, 15.0, 0.3, 3.75).above_200k(6.0, 22.5, 0.6, 7.5),
+        );
+    }
+
+    #[test]
+    fn cursor_json_cache_maps_events_to_usage_messages() {
+        let dir = std::env::temp_dir().join(format!("tokcat-cursor-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tokcat-events.json");
+        // Shape mirrors a real get-filtered-usage-events row flattened by
+        // cursor_usage::CachedCursorEvent.
+        let json = r#"{"fetched_at_ms":1781757600000,"events":[
+            {"timestamp_ms":1781757574236,"model":"composer-2.5","input_tokens":555,"output_tokens":599,"cache_read_tokens":3988,"cost":0.0025726},
+            {"timestamp_ms":0,"model":"bad","input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cost":0.0}
+        ]}"#;
+        std::fs::write(&path, json).unwrap();
+
+        let msgs = parse_cursor_cache_json(&path);
+        std::fs::remove_dir_all(&dir).ok();
+
+        // The zero-timestamp row is dropped; the valid one maps through.
+        assert_eq!(msgs.len(), 1);
+        let m = &msgs[0];
+        assert_eq!(m.client, "cursor");
+        assert_eq!(m.model_id, normalize_model_id("composer-2.5"));
+        assert_eq!(m.tokens.input, 555);
+        assert_eq!(m.tokens.output, 599);
+        assert_eq!(m.tokens.cache_read, 3988);
+        assert_eq!(m.tokens.cache_write, 0);
+        assert!((m.cost - 0.0025726).abs() < 1e-9);
+        assert_eq!(
+            m.dedup_key.as_deref(),
+            Some("cursor:1781757574236:555:599")
         );
     }
 

@@ -215,10 +215,42 @@ struct ClaudeRefreshResponse {
 
 pub async fn run() -> AgentUsagePayload {
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    let mut agents = Vec::new();
+    if codex_is_configured() {
+        agents.push(fetch_codex().await);
+    }
+    if claude_is_configured() {
+        agents.push(fetch_claude().await);
+    }
     AgentUsagePayload {
         generated_at,
-        agents: vec![fetch_codex().await, fetch_claude().await],
+        agents,
     }
+}
+
+/// Whether Codex OAuth has been set up at all. A missing auth.json means Codex
+/// isn't installed / logged in, so we hide its tile rather than render a
+/// perpetual "not found" error. A present-but-broken auth.json still surfaces
+/// an error tile so the user knows to re-authenticate.
+fn codex_is_configured() -> bool {
+    codex_home().join("auth.json").exists()
+}
+
+/// Whether Claude OAuth has been set up at all, mirroring the lookup order in
+/// load_claude_credentials (env override, Keychain, credentials file).
+fn claude_is_configured() -> bool {
+    let env_token = std::env::var("TOKCAT_CLAUDE_OAUTH_TOKEN")
+        .or_else(|_| std::env::var("CODEXBAR_CLAUDE_OAUTH_TOKEN"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if env_token.is_some() {
+        return true;
+    }
+    if matches!(load_claude_credentials_from_keychain(), Ok(Some(_))) {
+        return true;
+    }
+    claude_credentials_path().exists()
 }
 
 async fn fetch_codex() -> AgentUsageSnapshot {
@@ -1124,6 +1156,32 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_tile_gated_on_auth_json_presence() {
+        // The agent-limits panel hides Codex unless it's actually set up. The
+        // gate is the presence of auth.json under CODEX_HOME — a missing file
+        // means "not installed / not logged in" and the tile stays hidden.
+        let dir =
+            std::env::temp_dir().join(format!("tokcat-codex-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("CODEX_HOME", &dir);
+
+        assert!(
+            !codex_is_configured(),
+            "no auth.json under CODEX_HOME => Codex not configured"
+        );
+
+        std::fs::write(dir.join("auth.json"), "{}").unwrap();
+        assert!(
+            codex_is_configured(),
+            "auth.json present => Codex configured"
+        );
+
+        std::env::remove_var("CODEX_HOME");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn maps_codex_primary_and_secondary_windows() {
