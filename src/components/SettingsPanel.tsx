@@ -231,6 +231,21 @@ export function SettingsPanel({ open, onClose, settings, onChange }: Props) {
             </div>
           </section>
 
+          {tauri && (
+            <section className="settings-section">
+              <div className="settings-label">Cursor usage</div>
+              <div className="settings-group">
+                <div className="settings-row">
+                  <span className="settings-row-label">Fetch from cursor.com</span>
+                  <SwitchToggle
+                    checked={settings.cursorUsage}
+                    onChange={next => onChange({ ...settings, cursorUsage: next })}
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="settings-section">
             <div className="settings-label">About</div>
             <div className="settings-group">

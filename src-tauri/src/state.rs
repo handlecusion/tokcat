@@ -25,6 +25,10 @@ pub struct AppState {
     // Set while a refresh fetch is in flight. The bounce loop reads this to
     // start the up/down animation on the tray cat.
     refreshing: AtomicBool,
+    // Opt-in: when true the refresh path fetches Cursor usage from cursor.com
+    // (the only client without a local token/cost ledger). Off by default to
+    // keep Tokcat local-first unless the user explicitly enables it.
+    cursor_usage_enabled: AtomicBool,
     tailer: Arc<UsageTailer>,
 }
 
@@ -36,6 +40,7 @@ impl AppState {
             animation_style: AtomicU32::new(2),
             suppress_blur_hide: AtomicU32::new(0),
             refreshing: AtomicBool::new(false),
+            cursor_usage_enabled: AtomicBool::new(false),
             tailer: Arc::new(UsageTailer::new()),
         })
     }
@@ -130,6 +135,14 @@ impl AppState {
 
     pub fn is_animate_enabled(&self) -> bool {
         self.animate_enabled.load(Ordering::SeqCst)
+    }
+
+    pub fn set_cursor_usage_enabled(&self, enabled: bool) {
+        self.cursor_usage_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn is_cursor_usage_enabled(&self) -> bool {
+        self.cursor_usage_enabled.load(Ordering::SeqCst)
     }
 
     pub fn known_years(&self) -> Vec<String> {
