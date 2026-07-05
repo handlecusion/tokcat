@@ -137,7 +137,7 @@ pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn show_popover<R: Runtime>(app: &AppHandle<R>) {
+pub fn show_popover<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
         prepare_popover_window(&w);
         if let Some(tray) = app.tray_by_id("main-tray") {

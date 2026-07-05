@@ -33,6 +33,11 @@ tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-global-shortcut = "2"
+# Route a second launch (a real new process, e.g. running the binary directly)
+# back into the running instance so it surfaces the popover instead of starting
+# a duplicate tray. Complements the RunEvent::Reopen handler, which covers the
+# common case where macOS reopens the already-running .app without spawning.
+tauri-plugin-single-instance = "2"
 # Bundled SQLite so we don't depend on the system libsqlite3; needed for
 # the Hermes Agent SQLite tail in usage_tail.rs (no schema migrations —
 # read-only queries only).
