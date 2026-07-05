@@ -347,6 +347,13 @@ pub fn run() {
     let toggle_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SUPER), Code::KeyT);
 
     let mut builder = tauri::Builder::default()
+        // Must be registered first. If a second Tokcat process is launched
+        // (e.g. running the binary directly, or `open -n`), this fires in the
+        // already-running instance instead of starting a duplicate tray — we
+        // surface the popover, mirroring the RunEvent::Reopen path below.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_popover(app);
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -431,7 +438,27 @@ pub fn run() {
         Ok(())
     });
 
-    builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    let app = builder
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |app_handle, event| {
+        // macOS sends a "reopen" event when the user launches Tokcat again while
+        // it's already running (double-click in Finder/Launchpad, Spotlight,
+        // `open`, Dock). Because Tokcat is an Accessory app with a hidden window,
+        // the default behavior is a no-op — nothing appears on screen. Surface
+        // the popover so re-launching acts as an explicit "open". This is also
+        // the only way back in when the menu bar icon is hidden behind the notch
+        // or menu-bar overflow on small screens.
+        #[cfg(target_os = "macos")]
+        {
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_popover(app_handle);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (app_handle, event);
+        }
+    });
 }
