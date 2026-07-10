@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
@@ -12,6 +16,13 @@ const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+
+// Grok Build OAuth / billing — same endpoints as tokscale's usage/grok module.
+const GROK_SUBSCRIPTIONS_URL: &str = "https://grok.com/rest/subscriptions";
+const GROK_TASK_USAGE_URL: &str = "https://grok.com/rest/tasks/usage";
+const GROK_BILLING_GRPC_URL: &str =
+    "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
+const GROK_USER_AGENT: &str = "Grok Build";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,6 +233,9 @@ pub async fn run() -> AgentUsagePayload {
     if claude_is_configured() {
         agents.push(fetch_claude().await);
     }
+    if grok_is_configured() {
+        agents.push(fetch_grok().await);
+    }
     AgentUsagePayload {
         generated_at,
         agents,
@@ -251,6 +265,114 @@ fn claude_is_configured() -> bool {
         return true;
     }
     claude_credentials_path().exists()
+}
+
+/// Whether Grok Build OAuth credentials exist under `$GROK_HOME/auth.json`
+/// (default `~/.grok/auth.json`). Missing file hides the Grok limits tile.
+fn grok_is_configured() -> bool {
+    grok_auth_path().is_file()
+}
+
+async fn fetch_grok() -> AgentUsageSnapshot {
+    match fetch_grok_inner().await {
+        Ok(snapshot) => snapshot,
+        Err(error) => AgentUsageSnapshot {
+            client_id: "grok".to_string(),
+            source: "oauth".to_string(),
+            updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            identity: None,
+            windows: Vec::new(),
+            credits: None,
+            error: Some(error),
+        },
+    }
+}
+
+async fn fetch_grok_inner() -> Result<AgentUsageSnapshot, String> {
+    let credentials = load_grok_credentials()?;
+    let mut errors = Vec::new();
+    let mut plan_only: Option<(Option<String>, Option<String>)> = None;
+    let now = Utc::now();
+
+    for (index, credential) in credentials.iter().enumerate() {
+        match fetch_grok_network_usage(credential).await {
+            Ok((plan, email, windows)) if !windows.is_empty() => {
+                return Ok(AgentUsageSnapshot {
+                    client_id: "grok".to_string(),
+                    source: "oauth".to_string(),
+                    updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+                    identity: Some(AgentIdentity {
+                        email: email.or_else(|| credential.email.clone()),
+                        plan,
+                    }),
+                    windows,
+                    credits: None,
+                    error: None,
+                });
+            }
+            Ok((plan, email, _)) => {
+                if plan_only.is_none() {
+                    plan_only = Some((plan, email.or_else(|| credential.email.clone())));
+                }
+            }
+            Err(error) => errors.push(format!("Grok credential #{} failed: {error}", index + 1)),
+        }
+    }
+
+    // Agent stdio billing has no credential context — skip when multiple
+    // accounts are present (same policy as tokscale).
+    if credentials.len() == 1 {
+        if let Some(billing) = fetch_grok_agent_billing(Duration::from_secs(4)) {
+            let mut metrics = Vec::new();
+            if let Some(metric) = parse_grok_billing_json_metric(&billing) {
+                metrics.push(metric);
+            }
+            collect_grok_task_usage_metrics(&billing, &mut metrics);
+            if !metrics.is_empty() {
+                let (plan, email) = plan_only.unwrap_or((None, credentials[0].email.clone()));
+                return Ok(AgentUsageSnapshot {
+                    client_id: "grok".to_string(),
+                    source: "oauth".to_string(),
+                    updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+                    identity: Some(AgentIdentity { email, plan }),
+                    windows: metrics
+                        .into_iter()
+                        .map(|m| map_grok_metric(m, now))
+                        .collect(),
+                    credits: None,
+                    error: None,
+                });
+            }
+        } else {
+            errors.push("Grok agent billing RPC unavailable".to_string());
+        }
+    } else if credentials.len() > 1 {
+        errors
+            .push("Grok agent billing fallback skipped: multiple credentials present".to_string());
+    }
+
+    if let Some((plan, email)) = plan_only {
+        // Plan-only: show SuperGrok identity even when percent metrics fail.
+        // Do not set error — AgentLimitsCard prefers error over identity and
+        // would hide a valid plan behind a red "Error" status.
+        let _ = errors;
+        return Ok(AgentUsageSnapshot {
+            client_id: "grok".to_string(),
+            source: "oauth".to_string(),
+            updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+            identity: Some(AgentIdentity { email, plan }),
+            windows: Vec::new(),
+            credits: None,
+            error: None,
+        });
+    }
+
+    let detail = if errors.is_empty() {
+        "no usage or active subscription data returned".to_string()
+    } else {
+        errors.join("; ")
+    };
+    Err(format!("Grok usage unavailable: {detail}"))
 }
 
 async fn fetch_codex() -> AgentUsageSnapshot {
@@ -1006,6 +1128,693 @@ fn claude_credentials_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".claude/.credentials.json"))
 }
 
+// ---------------------------------------------------------------------------
+// Grok Build quota (OAuth credits / task limits)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct GrokCredentials {
+    token: String,
+    email: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct GrokMetric {
+    label: String,
+    used_percent: f64,
+    remaining_percent: f64,
+    remaining_label: Option<String>,
+    resets_at: Option<String>,
+}
+
+#[derive(Debug)]
+enum GrokProtoValue<'a> {
+    Varint(u64),
+    Fixed32(u32),
+    Fixed64,
+    Bytes(&'a [u8]),
+}
+
+fn grok_home() -> PathBuf {
+    std::env::var_os("GROK_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".grok")))
+        .unwrap_or_else(|| PathBuf::from(".grok"))
+}
+
+fn grok_auth_path() -> PathBuf {
+    grok_home().join("auth.json")
+}
+
+fn load_grok_credentials() -> Result<Vec<GrokCredentials>, String> {
+    let path = grok_auth_path();
+    let content = fs::read_to_string(&path).map_err(|_| {
+        "Grok auth.json not found. Run `grok login` to authenticate.".to_string()
+    })?;
+    let doc: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("parse Grok auth.json: {e}"))?;
+    grok_credential_candidates_from_value(&doc)
+}
+
+fn grok_credential_candidates_from_value(doc: &Value) -> Result<Vec<GrokCredentials>, String> {
+    let entries = doc
+        .as_object()
+        .ok_or_else(|| "Grok auth.json must contain an object.".to_string())?;
+
+    let mut candidates: Vec<(u8, GrokCredentials)> = entries
+        .iter()
+        .filter_map(|(scope, value)| {
+            let entry = value.as_object()?;
+            let token = entry
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let email = entry
+                .get("email")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            let priority = if scope.contains("auth.x.ai") { 0 } else { 1 };
+            Some((priority, GrokCredentials { token, email }))
+        })
+        .collect();
+
+    candidates.sort_by_key(|(priority, _)| *priority);
+    let credentials: Vec<_> = candidates
+        .into_iter()
+        .map(|(_, credentials)| credentials)
+        .collect();
+
+    if credentials.is_empty() {
+        return Err("No Grok token found. Run `grok login`.".to_string());
+    }
+    Ok(credentials)
+}
+
+fn grok_bearer_request(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .get(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-XAI-Token-Auth", "xai-grok-cli")
+        .header("Accept", "application/json")
+        .header("User-Agent", GROK_USER_AGENT)
+}
+
+async fn fetch_grok_network_usage(
+    credentials: &GrokCredentials,
+) -> Result<(Option<String>, Option<String>, Vec<UsageWindow>), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+
+    let mut plan: Option<String> = None;
+    let mut metrics = Vec::new();
+    let mut errors = Vec::new();
+    let now = Utc::now();
+
+    match fetch_grok_billing_grpc(&client, &credentials.token).await {
+        Ok(body) => {
+            if let Some(metric) = parse_grok_grpc_billing_metric(&body) {
+                metrics.push(metric);
+            } else {
+                errors.push("Grok billing response was not recognized".to_string());
+            }
+        }
+        Err(error) => errors.push(format!("Grok billing request failed: {error}")),
+    }
+
+    if metrics.is_empty() {
+        match fetch_grok_task_usage(&client, &credentials.token).await {
+            Ok(task_usage) => collect_grok_task_usage_metrics(&task_usage, &mut metrics),
+            Err(error) => errors.push(format!("Grok task usage request failed: {error}")),
+        }
+    }
+
+    match fetch_grok_subscriptions(&client, &credentials.token).await {
+        Ok(subscriptions) => {
+            plan = parse_grok_subscription_plan(&subscriptions);
+        }
+        Err(error) => errors.push(format!("Grok subscriptions request failed: {error}")),
+    }
+
+    if metrics.is_empty() && plan.is_none() {
+        let detail = if errors.is_empty() {
+            "no usage or active subscription data returned".to_string()
+        } else {
+            errors.join("; ")
+        };
+        return Err(detail);
+    }
+
+    let windows = metrics
+        .into_iter()
+        .map(|m| map_grok_metric(m, now))
+        .collect();
+    Ok((plan, credentials.email.clone(), windows))
+}
+
+async fn fetch_grok_subscriptions(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Value, String> {
+    let resp = grok_bearer_request(client, token, GROK_SUBSCRIPTIONS_URL)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if text.trim_start().starts_with('<') {
+        return Err("returned HTML".to_string());
+    }
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+async fn fetch_grok_task_usage(client: &reqwest::Client, token: &str) -> Result<Value, String> {
+    let resp = grok_bearer_request(client, token, GROK_TASK_USAGE_URL)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err("NEEDS_AUTH".to_string());
+    }
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+async fn fetch_grok_billing_grpc(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Vec<u8>, String> {
+    let resp = client
+        .post(GROK_BILLING_GRPC_URL)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-XAI-Token-Auth", "xai-grok-cli")
+        .header("Accept", "application/grpc-web+proto")
+        .header("Content-Type", "application/grpc-web+proto")
+        .header("User-Agent", GROK_USER_AGENT)
+        .body(vec![0, 0, 0, 0, 0])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err("NEEDS_AUTH".to_string());
+    }
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    Ok(resp.bytes().await.map_err(|e| e.to_string())?.to_vec())
+}
+
+fn resolve_grok_binary() -> PathBuf {
+    // Packaged/menu-bar apps do not source shell rc, so `~/.grok/bin` is often
+    // missing from PATH. Prefer the install locations Grok Build uses.
+    if let Ok(home) = std::env::var("GROK_HOME") {
+        let candidate = PathBuf::from(home).join("bin").join("grok");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let candidate = PathBuf::from(home).join(".grok").join("bin").join("grok");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    PathBuf::from("grok")
+}
+
+fn fetch_grok_agent_billing(timeout: Duration) -> Option<Value> {
+    let mut child = Command::new(resolve_grok_binary())
+        .args(["agent", "--no-leader", "stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines().map_while(std::result::Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+
+    let result = (|| {
+        let stdin = child.stdin.as_mut()?;
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "1",
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                    "terminal": false
+                }
+            }
+        });
+        let billing = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "x.ai/billing",
+            "params": {}
+        });
+        writeln!(stdin, "{}", serde_json::to_string(&initialize).ok()?).ok()?;
+        writeln!(stdin, "{}", serde_json::to_string(&billing).ok()?).ok()?;
+        stdin.flush().ok()?;
+
+        let response = wait_for_grok_rpc_response(&rx, 2, timeout)?;
+        if response.get("error").is_some() {
+            return None;
+        }
+        response.get("result").cloned()
+    })();
+
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
+fn wait_for_grok_rpc_response(
+    rx: &mpsc::Receiver<String>,
+    expected_id: i64,
+    timeout: Duration,
+) -> Option<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        let line = rx.recv_timeout(remaining).ok()?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("id").and_then(Value::as_i64) == Some(expected_id) {
+            return Some(value);
+        }
+    }
+}
+
+fn map_grok_metric(metric: GrokMetric, now: DateTime<Utc>) -> UsageWindow {
+    let resets = metric
+        .resets_at
+        .as_deref()
+        .and_then(parse_datetime);
+    let reset_text = metric.remaining_label.or_else(|| {
+        resets.map(|date| reset_text(date, now))
+    });
+    UsageWindow {
+        label: metric.label,
+        used_percent: metric.used_percent,
+        remaining_percent: metric.remaining_percent,
+        resets_at: resets.map(|date| date.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        reset_text,
+    }
+}
+
+fn grok_title_words(raw: &str) -> String {
+    raw.replace(['_', '-'], " ")
+        .split_whitespace()
+        .map(|word| {
+            let lower = word.to_lowercase();
+            let mut chars = lower.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_grok_subscription_tier(raw: &str) -> String {
+    let trimmed = raw
+        .trim_start_matches("SUBSCRIPTION_TIER_")
+        .trim_start_matches("TIER_");
+    grok_title_words(trimmed)
+}
+
+fn grok_subscription_is_active(status: &str) -> bool {
+    // Real responses use `SUBSCRIPTION_STATUS_ACTIVE`; older/simple APIs
+    // may use plain `active`. Avoid matching `…_INACTIVE`.
+    let upper = status.trim().to_uppercase();
+    upper == "ACTIVE" || upper.ends_with("STATUS_ACTIVE")
+}
+
+fn parse_grok_subscription_plan(value: &Value) -> Option<String> {
+    let subscriptions = value.get("subscriptions")?.as_array()?;
+    let chosen = subscriptions.iter().find(|sub| {
+        sub.get("status")
+            .and_then(Value::as_str)
+            .map(grok_subscription_is_active)
+            .unwrap_or(false)
+    })?;
+    let tier = chosen.get("tier").and_then(Value::as_str)?;
+    Some(normalize_grok_subscription_tier(tier))
+}
+
+fn grok_numeric_value(value: &Value) -> Option<f64> {
+    if let Some(number) = value.as_f64() {
+        return number.is_finite().then_some(number);
+    }
+    if let Some(text) = value.as_str() {
+        return text.parse::<f64>().ok().filter(|number| number.is_finite());
+    }
+    value
+        .as_object()
+        .and_then(|object| object.get("val").or_else(|| object.get("value")))
+        .and_then(grok_numeric_value)
+}
+
+fn grok_number_at(value: &Value, path: &[&str]) -> Option<f64> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    grok_numeric_value(current)
+}
+
+fn grok_string_at(value: &Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    current.as_str().map(ToString::to_string)
+}
+
+fn grok_epoch_at(value: &Value, path: &[&str]) -> Option<String> {
+    grok_number_at(value, path).and_then(|ts| grok_epoch_to_rfc3339(ts as i64))
+}
+
+fn format_grok_cents(cents: f64) -> String {
+    format!("${:.2}", cents / 100.0)
+}
+
+fn grok_cycle_label(start: Option<&str>, end: Option<&str>) -> String {
+    let Some(start) = start else {
+        return "Credits".into();
+    };
+    let Some(end) = end else {
+        return "Credits".into();
+    };
+    let Ok(start) = DateTime::parse_from_rfc3339(start) else {
+        return "Credits".into();
+    };
+    let Ok(end) = DateTime::parse_from_rfc3339(end) else {
+        return "Credits".into();
+    };
+    let days = (end - start).num_days();
+    if (6..=8).contains(&days) {
+        "Weekly".into()
+    } else if (27..=33).contains(&days) {
+        "Monthly".into()
+    } else {
+        "Credits".into()
+    }
+}
+
+fn parse_grok_billing_json_metric(value: &Value) -> Option<GrokMetric> {
+    if let Some(metric) = parse_grok_billing_json_object(value) {
+        return Some(metric);
+    }
+    match value {
+        Value::Array(items) => items.iter().find_map(parse_grok_billing_json_metric),
+        Value::Object(object) => object.values().find_map(parse_grok_billing_json_metric),
+        _ => None,
+    }
+}
+
+fn parse_grok_billing_json_object(value: &Value) -> Option<GrokMetric> {
+    let monthly_limit = grok_number_at(value, &["monthlyLimit"])
+        .or_else(|| grok_number_at(value, &["config", "monthlyLimit"]));
+    let total_used = grok_number_at(value, &["usage", "totalUsed"])
+        .or_else(|| grok_number_at(value, &["totalUsed"]))
+        .or_else(|| grok_number_at(value, &["config", "usage", "totalUsed"]));
+    let percent = if let (Some(limit), Some(used)) = (monthly_limit, total_used) {
+        if limit > 0.0 {
+            Some((used / limit * 100.0).clamp(0.0, 100.0))
+        } else {
+            None
+        }
+    } else {
+        grok_number_at(value, &["usedPercent"])
+            .or_else(|| grok_number_at(value, &["usagePercent"]))
+            .or_else(|| grok_number_at(value, &["creditUsagePercent"]))
+    }?;
+    let percent = percent.is_finite().then(|| percent.clamp(0.0, 100.0))?;
+
+    let start = grok_string_at(value, &["billingCycle", "billingPeriodStart"])
+        .or_else(|| grok_string_at(value, &["billingPeriodStart"]))
+        .or_else(|| grok_epoch_at(value, &["billingPeriodStart"]));
+    let end = grok_string_at(value, &["billingCycle", "billingPeriodEnd"])
+        .or_else(|| grok_string_at(value, &["billingPeriodEnd"]))
+        .or_else(|| grok_epoch_at(value, &["billingPeriodEnd"]));
+
+    let remaining_label = if let (Some(limit), Some(used)) = (monthly_limit, total_used) {
+        let remaining = (limit - used).max(0.0);
+        Some(format!(
+            "{}/{} left",
+            format_grok_cents(remaining),
+            format_grok_cents(limit)
+        ))
+    } else {
+        None
+    };
+
+    Some(GrokMetric {
+        label: grok_cycle_label(start.as_deref(), end.as_deref()),
+        used_percent: percent,
+        remaining_percent: 100.0 - percent,
+        remaining_label,
+        resets_at: end,
+    })
+}
+
+fn push_grok_limit_metric(
+    metrics: &mut Vec<GrokMetric>,
+    label: &str,
+    used: Option<f64>,
+    limit: Option<f64>,
+    reset: Option<String>,
+) {
+    let Some(limit) = limit.filter(|limit| *limit > 0.0) else {
+        return;
+    };
+    let used = used.unwrap_or(0.0).clamp(0.0, limit);
+    let used_percent = (used / limit * 100.0).clamp(0.0, 100.0);
+    let remaining_label = format!("{:.0}/{:.0} left", limit - used, limit);
+    if metrics.iter().any(|metric| {
+        metric.label == label
+            && (metric.used_percent - used_percent).abs() < 0.0001
+            && metric.remaining_label.as_deref() == Some(remaining_label.as_str())
+    }) {
+        return;
+    }
+    metrics.push(GrokMetric {
+        label: label.into(),
+        used_percent,
+        remaining_percent: 100.0 - used_percent,
+        remaining_label: Some(remaining_label),
+        resets_at: reset,
+    });
+}
+
+fn collect_grok_task_usage_metrics(value: &Value, metrics: &mut Vec<GrokMetric>) {
+    if let Value::Object(object) = value {
+        let reset = object
+            .get("resetTime")
+            .or_else(|| object.get("resetsAt"))
+            .or_else(|| object.get("resetAt"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        push_grok_limit_metric(
+            metrics,
+            "Tasks",
+            object.get("usage").and_then(grok_numeric_value),
+            object.get("limit").and_then(grok_numeric_value),
+            reset.clone(),
+        );
+        push_grok_limit_metric(
+            metrics,
+            "Frequent",
+            object.get("frequentUsage").and_then(grok_numeric_value),
+            object.get("frequentLimit").and_then(grok_numeric_value),
+            reset.clone(),
+        );
+        push_grok_limit_metric(
+            metrics,
+            "Occasional",
+            object.get("occasionalUsage").and_then(grok_numeric_value),
+            object.get("occasionalLimit").and_then(grok_numeric_value),
+            reset,
+        );
+        for child in object.values() {
+            collect_grok_task_usage_metrics(child, metrics);
+        }
+    } else if let Value::Array(items) = value {
+        for child in items {
+            collect_grok_task_usage_metrics(child, metrics);
+        }
+    }
+}
+
+fn read_grok_varint(data: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut result = 0_u64;
+    let mut shift = 0_u32;
+    while *pos < data.len() && shift <= 63 {
+        let byte = data[*pos];
+        *pos += 1;
+        result |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(result);
+        }
+        shift += 7;
+    }
+    None
+}
+
+fn next_grok_proto_field<'a>(
+    data: &'a [u8],
+    pos: &mut usize,
+) -> Option<(u32, GrokProtoValue<'a>)> {
+    let key = read_grok_varint(data, pos)?;
+    let field = u32::try_from(key >> 3).ok()?;
+    let wire = key & 0x07;
+    match wire {
+        0 => read_grok_varint(data, pos).map(|value| (field, GrokProtoValue::Varint(value))),
+        1 => {
+            if *pos + 8 > data.len() {
+                return None;
+            }
+            *pos += 8;
+            Some((field, GrokProtoValue::Fixed64))
+        }
+        2 => {
+            let len = usize::try_from(read_grok_varint(data, pos)?).ok()?;
+            if *pos + len > data.len() {
+                return None;
+            }
+            let bytes = &data[*pos..*pos + len];
+            *pos += len;
+            Some((field, GrokProtoValue::Bytes(bytes)))
+        }
+        5 => {
+            if *pos + 4 > data.len() {
+                return None;
+            }
+            let value =
+                u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
+            *pos += 4;
+            Some((field, GrokProtoValue::Fixed32(value)))
+        }
+        _ => None,
+    }
+}
+
+fn grok_timestamp_message_to_rfc3339(data: &[u8]) -> Option<String> {
+    let mut pos = 0;
+    while pos < data.len() {
+        let (field, value) = next_grok_proto_field(data, &mut pos)?;
+        if field == 1 {
+            if let GrokProtoValue::Varint(seconds) = value {
+                return grok_epoch_to_rfc3339(i64::try_from(seconds).ok()?);
+            }
+        }
+    }
+    None
+}
+
+fn grok_epoch_to_rfc3339(seconds: i64) -> Option<String> {
+    Utc.timestamp_opt(seconds, 0)
+        .single()
+        .map(|dt| dt.to_rfc3339())
+}
+
+fn parse_grok_billing_config_proto(data: &[u8]) -> Option<GrokMetric> {
+    let mut pos = 0;
+    let mut used_percent: Option<f64> = None;
+    let mut start: Option<String> = None;
+    let mut end: Option<String> = None;
+
+    while pos < data.len() {
+        let (field, value) = next_grok_proto_field(data, &mut pos)?;
+        match (field, value) {
+            (1, GrokProtoValue::Fixed32(bits)) => {
+                let percent = f32::from_bits(bits) as f64;
+                if percent.is_finite() {
+                    used_percent = Some(percent.clamp(0.0, 100.0));
+                }
+            }
+            (4, GrokProtoValue::Bytes(bytes)) => {
+                start = grok_timestamp_message_to_rfc3339(bytes);
+            }
+            (5, GrokProtoValue::Bytes(bytes)) => {
+                end = grok_timestamp_message_to_rfc3339(bytes);
+            }
+            _ => {}
+        }
+    }
+
+    // Proto3 omits default fixed32 (0% used). If the frame only carries period
+    // bounds, treat missing percent as zero instead of dropping the window.
+    if used_percent.is_none() && start.is_none() && end.is_none() {
+        return None;
+    }
+    let percent = used_percent.unwrap_or(0.0);
+    Some(GrokMetric {
+        label: grok_cycle_label(start.as_deref(), end.as_deref()),
+        used_percent: percent,
+        remaining_percent: 100.0 - percent,
+        remaining_label: None,
+        resets_at: end,
+    })
+}
+
+fn parse_grok_grpc_billing_metric(body: &[u8]) -> Option<GrokMetric> {
+    let mut pos = 0;
+    while pos + 5 <= body.len() {
+        let flag = body[pos];
+        let len = u32::from_be_bytes([body[pos + 1], body[pos + 2], body[pos + 3], body[pos + 4]])
+            as usize;
+        pos += 5;
+        if pos + len > body.len() {
+            return None;
+        }
+        let payload = &body[pos..pos + len];
+        pos += len;
+        if flag & 0x80 != 0 {
+            continue;
+        }
+
+        let mut payload_pos = 0;
+        while payload_pos < payload.len() {
+            let (field, value) = next_grok_proto_field(payload, &mut payload_pos)?;
+            if field == 1 {
+                if let GrokProtoValue::Bytes(config) = value {
+                    if let Some(metric) = parse_grok_billing_config_proto(config) {
+                        return Some(metric);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn credentials_needs_refresh(last_refresh: Option<DateTime<Utc>>) -> bool {
     let Some(last_refresh) = last_refresh else {
         return true;
@@ -1301,5 +2110,224 @@ mod tests {
             windows.iter().map(|w| w.label.as_str()).collect::<Vec<_>>(),
             vec!["Session", "Weekly", "Sonnet", "Designs", "Daily Routines"]
         );
+    }
+
+    /// Serializes tests that mutate process-global `GROK_HOME`.
+    static GROK_HOME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn grok_tile_gated_on_auth_json_presence() {
+        let _guard = GROK_HOME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("tokcat-grok-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("GROK_HOME", &dir);
+
+        assert!(!grok_is_configured(), "no auth.json => Grok not configured");
+        std::fs::write(dir.join("auth.json"), "{}").unwrap();
+        assert!(grok_is_configured(), "auth.json present => Grok configured");
+
+        std::env::remove_var("GROK_HOME");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_grok_binary_prefers_grok_home_bin() {
+        let _guard = GROK_HOME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("tokcat-grok-bin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let binary = bin_dir.join("grok");
+        std::fs::write(&binary, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&binary).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&binary, perms).unwrap();
+        }
+        std::env::set_var("GROK_HOME", &dir);
+        assert_eq!(resolve_grok_binary(), binary);
+        std::env::remove_var("GROK_HOME");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reads_grok_credentials_auth_scope_first() {
+        let value = serde_json::json!({
+            "https://example.com": {
+                "key": "secondary-token",
+                "email": "secondary@example.com"
+            },
+            "https://auth.x.ai": {
+                "key": "primary-token",
+                "email": "primary@example.com"
+            }
+        });
+        let credentials = grok_credential_candidates_from_value(&value).unwrap();
+        assert_eq!(credentials.len(), 2);
+        assert_eq!(credentials[0].token, "primary-token");
+        assert_eq!(credentials[0].email.as_deref(), Some("primary@example.com"));
+    }
+
+    #[test]
+    fn parses_grok_billing_json_metric() {
+        let value = serde_json::json!({
+            "billingCycle": {
+                "billingPeriodStart": "2026-06-01T00:00:00Z",
+                "billingPeriodEnd": "2026-07-01T00:00:00Z"
+            },
+            "monthlyLimit": { "val": 10000 },
+            "usage": {
+                "totalUsed": { "val": 1250 }
+            }
+        });
+        let metric = parse_grok_billing_json_metric(&value).expect("billing metric");
+        assert_eq!(metric.label, "Monthly");
+        assert!((metric.used_percent - 12.5).abs() < 1e-9);
+        assert_eq!(
+            metric.remaining_label.as_deref(),
+            Some("$87.50/$100.00 left")
+        );
+        let now = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
+        let window = map_grok_metric(metric, now);
+        assert_eq!(window.label, "Monthly");
+        assert!((window.remaining_percent - 87.5).abs() < 1e-9);
+        assert_eq!(
+            window.reset_text.as_deref(),
+            Some("$87.50/$100.00 left")
+        );
+    }
+
+    #[test]
+    fn parses_grok_task_usage_metrics() {
+        let value = serde_json::json!({
+            "frequentUsage": 3,
+            "frequentLimit": 10,
+            "occasionalUsage": 1,
+            "occasionalLimit": 5
+        });
+        let mut metrics = Vec::new();
+        collect_grok_task_usage_metrics(&value, &mut metrics);
+        assert_eq!(metrics.len(), 2);
+        assert_eq!(metrics[0].label, "Frequent");
+        assert!((metrics[0].used_percent - 30.0).abs() < 1e-9);
+        assert_eq!(metrics[1].label, "Occasional");
+        assert!((metrics[1].used_percent - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parses_grok_subscription_plan() {
+        let value = serde_json::json!({
+            "subscriptions": [
+                {
+                    "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                    "status": "SUBSCRIPTION_STATUS_ACTIVE"
+                }
+            ]
+        });
+        assert_eq!(
+            parse_grok_subscription_plan(&value).as_deref(),
+            Some("Super Grok Pro")
+        );
+
+        let inactive = serde_json::json!({
+            "subscriptions": [
+                {
+                    "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                    "status": "SUBSCRIPTION_STATUS_INACTIVE"
+                }
+            ]
+        });
+        assert_eq!(parse_grok_subscription_plan(&inactive), None);
+    }
+
+    #[test]
+    fn parses_grok_grpc_billing_percent_frame() {
+        fn push_varint(mut value: u64, out: &mut Vec<u8>) {
+            while value >= 0x80 {
+                out.push((value as u8 & 0x7f) | 0x80);
+                value >>= 7;
+            }
+            out.push(value as u8);
+        }
+        fn push_len_field(field: u64, payload: &[u8], out: &mut Vec<u8>) {
+            push_varint((field << 3) | 2, out);
+            push_varint(payload.len() as u64, out);
+            out.extend_from_slice(payload);
+        }
+        fn push_fixed32_field(field: u64, value: u32, out: &mut Vec<u8>) {
+            push_varint((field << 3) | 5, out);
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        fn timestamp_message(seconds: u64) -> Vec<u8> {
+            let mut out = Vec::new();
+            push_varint(1 << 3, &mut out);
+            push_varint(seconds, &mut out);
+            out
+        }
+
+        let mut config = Vec::new();
+        push_fixed32_field(1, 25.0_f32.to_bits(), &mut config);
+        push_len_field(4, &timestamp_message(1_780_272_000), &mut config);
+        push_len_field(5, &timestamp_message(1_782_864_000), &mut config);
+
+        let mut message = Vec::new();
+        push_len_field(1, &config, &mut message);
+
+        let mut frame = Vec::new();
+        frame.push(0);
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+
+        let metric = parse_grok_grpc_billing_metric(&frame).expect("billing metric");
+        assert_eq!(metric.label, "Monthly");
+        assert!((metric.used_percent - 25.0).abs() < 1e-6);
+        assert!(metric.resets_at.is_some());
+    }
+
+    #[test]
+    fn parses_grok_grpc_billing_with_omitted_zero_percent() {
+        // Period bounds only — proto3 omits default 0% fixed32 field 1.
+        fn push_varint(mut value: u64, out: &mut Vec<u8>) {
+            while value >= 0x80 {
+                out.push((value as u8 & 0x7f) | 0x80);
+                value >>= 7;
+            }
+            out.push(value as u8);
+        }
+        fn push_len_field(field: u64, payload: &[u8], out: &mut Vec<u8>) {
+            push_varint((field << 3) | 2, out);
+            push_varint(payload.len() as u64, out);
+            out.extend_from_slice(payload);
+        }
+        fn timestamp_message(seconds: u64) -> Vec<u8> {
+            let mut out = Vec::new();
+            push_varint(1 << 3, &mut out);
+            push_varint(seconds, &mut out);
+            out
+        }
+
+        let mut config = Vec::new();
+        push_len_field(4, &timestamp_message(1_780_272_000), &mut config);
+        push_len_field(5, &timestamp_message(1_782_864_000), &mut config);
+
+        let mut message = Vec::new();
+        push_len_field(1, &config, &mut message);
+
+        let mut frame = Vec::new();
+        frame.push(0);
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+
+        let metric = parse_grok_grpc_billing_metric(&frame).expect("zero-usage billing");
+        assert_eq!(metric.label, "Monthly");
+        assert!((metric.used_percent - 0.0).abs() < 1e-9);
+        assert!((metric.remaining_percent - 100.0).abs() < 1e-9);
     }
 }

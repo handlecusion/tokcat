@@ -22,6 +22,9 @@ const LIMIT_ROWS: Record<string, LimitRow[]> = {
   codex: [{ label: 'Session' }, { label: 'Weekly' }],
   claude: [{ label: 'Session' }, { label: 'Weekly' }],
   gemini: [{ label: 'Pro' }, { label: 'Flash' }],
+  // Placeholder rows while OAuth quota is loading; real windows come from
+  // the backend (Monthly credits, Frequent/Occasional task limits, …).
+  grok: [{ label: 'Monthly' }],
 }
 
 function normalizeTraceClient(id: string): string {
@@ -54,7 +57,7 @@ export function AgentLimitsCard({ clients, trace, agentUsage, title = 'Agent lim
   const liveClients = new Set(trace.filter(t => t.tokens_per_min > 0).map(t => normalizeTraceClient(t.client)))
   const snapshots = new Map((agentUsage?.agents ?? []).map(agent => [agent.clientId, agent]))
   const visibleClients = Array.from(new Set([
-    ...clients.filter(id => LIMIT_ROWS[id] || id === 'codex' || id === 'claude' || id === 'gemini'),
+    ...clients.filter(id => LIMIT_ROWS[id] || id === 'codex' || id === 'claude' || id === 'gemini' || id === 'grok'),
     ...Array.from(snapshots.keys()),
   ]))
 

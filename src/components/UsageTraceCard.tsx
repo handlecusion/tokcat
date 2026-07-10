@@ -11,6 +11,9 @@ interface Props {
 
 const CLIENT_LABEL: Record<string, string> = {
   'claude-code': 'Claude Code',
+  'codex-cli': 'Codex CLI',
+  hermes: 'Hermes',
+  grok: 'Grok Build',
 }
 
 function clientLabel(id: string): string {
