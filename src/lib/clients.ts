@@ -10,6 +10,7 @@ import opencodeIcon from '../assets/agent-icons/opencode.svg?raw'
 import droidIcon from '../assets/agent-icons/droid.svg?raw'
 import kilocodeIcon from '../assets/agent-icons/kilocode.svg?raw'
 import syntheticIcon from '../assets/agent-icons/synthetic.svg?raw'
+import grokIcon from '../assets/agent-icons/grok.svg?raw'
 
 // 'mono' icons are single-color glyphs we tint white over the brand-color disc.
 // 'full' icons carry their own design (background + colors) and fill the disc as-is.
@@ -41,6 +42,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   amp: { displayName: 'Amp', color: '#10b981', iconRaw: ampIcon, iconType: 'mono' },
   droid: { displayName: 'Droid', color: '#22c55e', iconRaw: droidIcon, iconType: 'full' },
   hermes: { displayName: 'Hermes', color: '#a78bfa' },
+  grok: { displayName: 'Grok Build', color: '#111827', iconRaw: grokIcon, iconType: 'mono' },
   pi: { displayName: 'Pi', color: '#f472b6', iconRaw: piIcon, iconType: 'mono' },
   kimi: { displayName: 'Kimi CLI', color: '#fbbf24' },
   qwen: { displayName: 'Qwen CLI', color: '#7c3aed', iconRaw: qwenIcon, iconType: 'mono' },

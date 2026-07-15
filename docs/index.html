@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Tokcat - AI Token Usage Monitor for the macOS Menu Bar</title>
-  <meta name="description" content="Tokcat is a free, open-source AI token usage monitor for the macOS menu bar: track Claude Code usage, Codex CLI usage, Cursor IDE usage, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, and LLM cost tracker data as 2D stacked token bars and a 3D contribution graph." />
+  <meta name="description" content="Tokcat is a free, open-source AI token usage monitor for the macOS menu bar: track Claude Code usage, Codex CLI usage, Cursor IDE usage, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, Grok Build, and LLM cost tracker data as 2D stacked token bars and a 3D contribution graph." />
   <link rel="canonical" href="https://handlecusion.github.io/tokcat/" />
   <meta name="robots" content="index,follow,max-image-preview:large" />
   <meta name="author" content="handlecusion" />
-  <meta name="keywords" content="tokcat, AI token usage monitor, AI token usage, macOS menu bar, macOS menu bar app, Claude Code usage, Claude Code usage tracker, OpenAI Codex usage, Codex usage, Codex usage tracker, Cursor usage, Cursor usage tracker, LLM cost tracker, token cost tracker, AI coding agent usage, AI coding spend, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Tauri 2" />
+  <meta name="keywords" content="tokcat, AI token usage monitor, AI token usage, macOS menu bar, macOS menu bar app, Claude Code usage, Claude Code usage tracker, OpenAI Codex usage, Codex usage, Codex usage tracker, Cursor usage, Cursor usage tracker, LLM cost tracker, token cost tracker, AI coding agent usage, AI coding spend, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Grok Build, Tauri 2" />
 
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Tokcat" />
   <meta property="og:title" content="Tokcat - AI Token Usage Monitor for macOS" />
-  <meta property="og:description" content="Track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and LLM costs from the macOS menu bar. Free, open-source, no telemetry." />
+  <meta property="og:description" content="Track Claude Code usage, Codex usage, Cursor usage, Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Grok Build, and LLM costs from the macOS menu bar. Free, open-source, no telemetry." />
   <meta property="og:url" content="https://handlecusion.github.io/tokcat/" />
   <meta property="og:image" content="https://handlecusion.github.io/tokcat/screenshots/dashboard-3d.png" />
 
@@ -56,7 +56,7 @@
         "installUrl": "https://github.com/handlecusion/tokcat#quick-start",
         "softwareHelp": "https://github.com/handlecusion/tokcat/blob/main/README.md",
         "license": "https://opensource.org/licenses/MIT",
-        "description": "AI token usage monitor for the macOS menu bar. Tokcat tracks Claude Code usage, Codex CLI usage, Cursor IDE usage, GitHub Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, and LLM cost tracker data as 2D stacked token bars and a 3D GitHub-style contribution graph. Reads local usage logs in a Tauri 2 shell.",
+        "description": "AI token usage monitor for the macOS menu bar. Tokcat tracks Claude Code usage, Codex CLI usage, Cursor IDE usage, GitHub Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, Grok Build, and LLM cost tracker data as 2D stacked token bars and a 3D GitHub-style contribution graph. Reads local usage logs in a Tauri 2 shell.",
         "featureList": [
           "AI token usage monitor for macOS",
           "Claude Code usage tracker",
@@ -64,8 +64,8 @@
           "Cursor usage tracker",
           "LLM cost tracker for AI coding agent usage",
           "2D stacked token chart and 3D contribution graph",
-          "Overview and per-client tabs (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes)",
-          "Codex and Claude OAuth agent-limit cards",
+          "Overview and per-client tabs (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build)",
+          "Codex, Claude, and Grok Build OAuth agent-limit cards",
           "Animated menu-bar cat icon reflecting token velocity",
           "macOS NSVisualEffectView vibrancy and light/dark adaptation",
           "Signed in-app updater with 30-minute check interval",
@@ -107,7 +107,7 @@
             "name": "What is Tokcat?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases for Apple Silicon and Intel Macs on macOS 11 or later."
+              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases for Apple Silicon and Intel Macs on macOS 11 or later."
             }
           },
           {
@@ -123,7 +123,7 @@
             "name": "Which AI coding tools does Tokcat track?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, and Hermes from local logs. New client formats are added in Tokcat's Rust usage reader."
+              "text": "Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build from local logs. New client formats are added in Tokcat's Rust usage reader."
             }
           },
           {
@@ -131,7 +131,7 @@
             "name": "Does Tokcat send my data anywhere?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It checks GitHub Releases for updates and can call direct Codex/Claude OAuth quota endpoints when local credentials are available. Token-usage history is read locally from session logs."
+              "text": "Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It checks GitHub Releases for updates and can call direct Codex/Claude/Grok OAuth quota endpoints when local credentials are available. Token-usage history is read locally from session logs."
             }
           },
           {
@@ -199,7 +199,7 @@
         <h1 id="hero-title">Tokcat</h1>
         <p class="hero-copy">
           AI token usage monitor and LLM cost tracker for Claude Code usage, Codex usage, Cursor usage,
-          Copilot, Gemini, OpenCode, Amp, Droid, and Hermes. Local logs in, clear spend out.
+          Copilot, Gemini, OpenCode, Amp, Droid, Hermes, and Grok Build. Local logs in, clear spend out.
         </p>
         <div class="hero-actions" aria-label="Primary actions">
           <a class="button primary" href="#install">Install with Homebrew</a>
@@ -303,6 +303,7 @@
           <li>Amp</li>
           <li>Droid</li>
           <li>Hermes</li>
+          <li>Grok Build</li>
         </ul>
       </div>
     </section>
@@ -324,7 +325,7 @@
           </article>
           <article class="feature-card">
             <h3>Multi-client</h3>
-            <p>Overview and client tabs for Claude Code, Codex CLI, Cursor IDE, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, and Hermes.</p>
+            <p>Overview and client tabs for Claude Code, Codex CLI, Cursor IDE, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, and Grok Build.</p>
           </article>
           <article class="feature-card">
             <h3>Actionable</h3>
@@ -364,11 +365,11 @@
           </details>
           <details>
             <summary>Which AI coding tools does Tokcat track?</summary>
-            <p>Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, and Hermes from local logs.</p>
+            <p>Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build from local logs.</p>
           </details>
           <details>
             <summary>Does Tokcat send my data anywhere?</summary>
-            <p>Token usage history stays local. The app checks GitHub Releases for updater metadata, can call direct Codex/Claude quota endpoints, and does not run analytics.</p>
+            <p>Token usage history stays local. The app checks GitHub Releases for updater metadata, can call direct Codex/Claude/Grok quota endpoints, and does not run analytics.</p>
           </details>
           <details>
             <summary>Does Tokcat run on Intel Macs or Windows?</summary>

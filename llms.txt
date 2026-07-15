@@ -1,8 +1,8 @@
 # Tokcat
 
-> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon and Intel Macs, macOS 11+. MIT licensed.
+> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon and Intel Macs, macOS 11+. MIT licensed.
 
-Tokcat is a Tauri 2 app with an in-process Rust local-usage reader. The menu-bar cat icon shows today's token count, USD cost, totals, live tokens/min, or icon-only mode; clicking it opens a frosted-glass popover with Overview/client tabs, 2D/3D usage views, Codex/Claude agent-limit cards, Live session throughput, streak summaries, themes, and a Settings panel. The app reads supported client logs on-device, stores no telemetry, and requires no Tokcat account.
+Tokcat is a Tauri 2 app with an in-process Rust local-usage reader. The menu-bar cat icon shows today's token count, USD cost, totals, live tokens/min, or icon-only mode; clicking it opens a frosted-glass popover with Overview/client tabs, 2D/3D usage views, Codex/Claude/Grok agent-limit cards, Live session throughput, streak summaries, themes, and a Settings panel. The app reads supported client logs on-device, stores no telemetry, and requires no Tokcat account.
 
 ## Install
 
@@ -25,8 +25,8 @@ Tokcat is a Tauri 2 app with an in-process Rust local-usage reader. The menu-bar
 
 ## Supported AI clients
 
-Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, and Hermes.
+Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build.
 
 ## Privacy
 
-No telemetry. No cloud sync. No Tokcat account. Network access is limited to the GitHub Releases updater manifest (`latest.json`) checked every 30 minutes and direct Codex/Claude OAuth quota lookups when local credentials are available. Token-usage history is read locally from session logs on disk.
+No telemetry. No cloud sync. No Tokcat account. Network access is limited to the GitHub Releases updater manifest (`latest.json`) checked every 30 minutes and direct Codex/Claude/Grok OAuth quota lookups when local credentials are available. Token-usage history is read locally from session logs on disk.

@@ -6,7 +6,8 @@
 //
 // Phase 1: Claude Code (~/.claude/projects/**/*.jsonl)
 // Phase 2a: Codex CLI (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl)
-// Phase 2b (TODO): Hermes/OpenCode (SQLite — needs rusqlite).
+// Phase 2b: Hermes (SQLite aggregates, diffed in tick_hermes)
+// Phase 2c: Grok Build ($GROK_HOME/sessions/*/*/updates.jsonl)
 
 use chrono::DateTime;
 use parking_lot::Mutex;
@@ -21,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const CLIENT_CLAUDE: &str = "claude-code";
 const CLIENT_CODEX: &str = "codex-cli";
 const CLIENT_HERMES: &str = "hermes";
+const CLIENT_GROK: &str = "grok";
 const EVENT_WINDOW_SECS: i64 = 3600;
 const COLD_SCAN_LOOKBACK_SECS: i64 = 6 * 3600;
 
@@ -28,6 +30,7 @@ const COLD_SCAN_LOOKBACK_SECS: i64 = 6 * 3600;
 enum ClientKind {
     Claude,
     Codex,
+    Grok,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +70,12 @@ struct FileState {
     // model through file state so a tick that lands mid-file still
     // attributes events correctly.
     codex_model: Option<String>,
+    // Grok's updates.jsonl carries a cumulative totalTokens counter and
+    // occasional modelId tags. Track the last observed total so we can
+    // emit positive deltas only, and remember the latest model for
+    // attribution when a line omits modelId.
+    grok_last_total: Option<i64>,
+    grok_model: Option<String>,
 }
 
 impl FileState {
@@ -75,6 +84,8 @@ impl FileState {
             offset: size,
             mtime_ms,
             codex_model: None,
+            grok_last_total: None,
+            grok_model: None,
         }
     }
 }
@@ -141,6 +152,14 @@ impl UsageTailer {
                     if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
                         continue;
                     }
+                    // Grok session dirs also contain events.jsonl /
+                    // chat_history.jsonl; only updates.jsonl carries
+                    // cumulative totalTokens for the live rate signal.
+                    if client == ClientKind::Grok
+                        && path.file_name().and_then(|s| s.to_str()) != Some("updates.jsonl")
+                    {
+                        continue;
+                    }
                     let meta = match entry.metadata() {
                         Ok(m) => m,
                         Err(_) => continue,
@@ -162,12 +181,22 @@ impl UsageTailer {
 
                     let (start_offset, _) = prev.unwrap_or((0, 0));
                     if size == start_offset {
-                        self.files
-                            .lock()
-                            .insert(path.clone(), FileState::at_eof(size, mtime_ms));
+                        // Preserve codex/grok thread state when only mtime
+                        // refreshes without growth.
+                        let mut files = self.files.lock();
+                        if let Some(existing) = files.get_mut(&path) {
+                            existing.offset = size;
+                            existing.mtime_ms = mtime_ms;
+                        } else {
+                            files.insert(path.clone(), FileState::at_eof(size, mtime_ms));
+                        }
                         continue;
                     }
                     if size < start_offset {
+                        // Truncated / rotated log — drop threaded counters so
+                        // we re-baseline instead of treating a new smaller
+                        // total as a negative delta.
+                        self.files.lock().remove(&path);
                         added += self.read_growth(&path, client, 0, size, mtime_ms);
                     } else {
                         added += self.read_growth(&path, client, start_offset, size, mtime_ms);
@@ -202,13 +231,17 @@ impl UsageTailer {
             return 0;
         }
 
-        // Lift the per-file codex_model out so we can mutate without
-        // re-locking on every line; write it back when we're done.
-        let mut codex_model: Option<String> = self
-            .files
-            .lock()
-            .get(path)
-            .and_then(|f| f.codex_model.clone());
+        // Lift per-file threaded state so we can mutate without re-locking
+        // on every line; write it back when we're done.
+        let (mut codex_model, mut grok_last_total, mut grok_model) = {
+            let files = self.files.lock();
+            let state = files.get(path);
+            (
+                state.and_then(|f| f.codex_model.clone()),
+                state.and_then(|f| f.grok_last_total),
+                state.and_then(|f| f.grok_model.clone()),
+            )
+        };
 
         let mut consumed: u64 = 0;
         for chunk in buf.split_inclusive(|&b| b == b'\n') {
@@ -226,9 +259,19 @@ impl UsageTailer {
             if !has_terminator && serde_json::from_slice::<serde_json::Value>(trimmed).is_err() {
                 break;
             }
+            // Full-file reads (start==0) treat the first totalTokens as a
+            // real delta so brand-new sessions contribute to the live rate.
+            // Mid-file attaches keep first observation as baseline only.
+            let grok_emit_first = start == 0;
             let recorded = match client {
                 ClientKind::Claude => self.parse_claude_line(path, trimmed),
                 ClientKind::Codex => self.parse_codex_line(trimmed, &mut codex_model),
+                ClientKind::Grok => self.parse_grok_line(
+                    trimmed,
+                    &mut grok_last_total,
+                    &mut grok_model,
+                    grok_emit_first,
+                ),
             };
             if recorded {
                 added += 1;
@@ -243,6 +286,8 @@ impl UsageTailer {
                 offset: new_offset,
                 mtime_ms,
                 codex_model,
+                grok_last_total,
+                grok_model,
             },
         );
         added
@@ -420,6 +465,75 @@ impl UsageTailer {
                 input,
                 output,
                 cache_read,
+                cache_write: 0,
+            },
+            "",
+        )
+    }
+
+    /// Grok Build updates.jsonl: cumulative `totalTokens` with no input/
+    /// output split. Emit positive deltas as input tokens for the live
+    /// rate signal.
+    ///
+    /// `emit_first_as_delta`: when true (full-file read from offset 0), the
+    /// first observed total is treated as a delta from 0 so brand-new
+    /// sessions contribute. When false (mid-file attach after EOF baseline),
+    /// the first total only seeds state.
+    ///
+    /// Decreasing totals (stream rewinds) are ignored without lowering
+    /// `last_total`, so recovering values are not double-counted as new
+    /// throughput.
+    fn parse_grok_line(
+        &self,
+        raw: &[u8],
+        last_total: &mut Option<i64>,
+        current_model: &mut Option<String>,
+        emit_first_as_delta: bool,
+    ) -> bool {
+        let value: serde_json::Value = match serde_json::from_slice(raw) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        if let Some(model) = extract_grok_model_id(&value) {
+            *current_model = Some(normalize_model(&model));
+        }
+
+        let Some(total) = extract_grok_total_tokens(&value) else {
+            return false;
+        };
+        if total < 0 {
+            return false;
+        }
+
+        let previous = match *last_total {
+            Some(prev) => prev,
+            None if emit_first_as_delta => 0,
+            None => {
+                *last_total = Some(total);
+                return false;
+            }
+        };
+        if total <= previous {
+            return false;
+        }
+        let delta = total - previous;
+        *last_total = Some(total);
+
+        let ts_ms = extract_grok_timestamp_ms(&value).unwrap_or_else(now_ms);
+        let model = current_model
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        self.push_event(
+            UsageEvent {
+                ts_ms,
+                client: CLIENT_GROK.to_string(),
+                agent: "main".to_string(),
+                model,
+                input: delta,
+                output: 0,
+                cache_read: 0,
                 cache_write: 0,
             },
             "",
@@ -640,7 +754,94 @@ fn roots() -> Vec<(PathBuf, ClientKind)> {
             out.push((codex, ClientKind::Codex));
         }
     }
+    if let Some(grok_sessions) = grok_sessions_root() {
+        out.push((grok_sessions, ClientKind::Grok));
+    }
     out
+}
+
+fn grok_sessions_root() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("GROK_HOME") {
+        let p = PathBuf::from(home).join("sessions");
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    let home = std::env::var_os("HOME")?;
+    let p = PathBuf::from(home).join(".grok").join("sessions");
+    p.is_dir().then_some(p)
+}
+
+fn extract_grok_model_id(value: &serde_json::Value) -> Option<String> {
+    for path in [
+        &["params", "update", "content", "_meta", "modelId"][..],
+        &["params", "update", "_meta", "modelId"][..],
+        &["params", "_meta", "modelId"][..],
+        &["params", "modelId"][..],
+        &["modelId"][..],
+        &["model"][..],
+    ] {
+        if let Some(model) = json_path(value, path).and_then(|v| v.as_str()) {
+            if !model.trim().is_empty() {
+                return Some(model.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_grok_total_tokens(value: &serde_json::Value) -> Option<i64> {
+    for path in [
+        &["params", "_meta", "totalTokens"][..],
+        &["params", "update", "_meta", "totalTokens"][..],
+        &["params", "update", "totalTokens"][..],
+        &["params", "totalTokens"][..],
+        &["totalTokens"][..],
+    ] {
+        if let Some(total) = json_path(value, path).and_then(|v| v.as_i64()) {
+            return Some(total);
+        }
+    }
+    None
+}
+
+fn extract_grok_timestamp_ms(value: &serde_json::Value) -> Option<i64> {
+    for path in [
+        &["params", "_meta", "agentTimestampMs"][..],
+        &["params", "update", "_meta", "agentTimestampMs"][..],
+        &["timestamp"][..],
+        &["ts"][..],
+    ] {
+        let Some(node) = json_path(value, path) else {
+            continue;
+        };
+        if let Some(i) = node.as_i64() {
+            return Some(normalize_epoch_ms(i));
+        }
+        if let Some(s) = node.as_str() {
+            if let Some(ms) = parse_rfc3339_ms(s) {
+                return Some(ms);
+            }
+            if let Ok(i) = s.parse::<i64>() {
+                return Some(normalize_epoch_ms(i));
+            }
+        }
+    }
+    None
+}
+
+fn json_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    path.iter()
+        .try_fold(value, |current, key| current.get(*key))
+}
+
+fn normalize_epoch_ms(raw: i64) -> i64 {
+    match raw.abs() {
+        100_000_000_000_000_000.. => raw / 1_000_000,
+        100_000_000_000_000.. => raw / 1_000,
+        100_000_000_000.. => raw,
+        _ => raw.saturating_mul(1000),
+    }
 }
 
 fn system_time_to_ms(t: Option<SystemTime>) -> i64 {
@@ -767,5 +968,103 @@ mod tests {
         assert_eq!(tailer.trace(3600)[0].tokens, 20);
 
         let _ = fs::remove_file(path);
+    }
+
+    fn grok_line(total: i64, model: Option<&str>, ts_ms: i64) -> String {
+        let model_meta = model
+            .map(|m| format!(r#","content":{{"type":"text","_meta":{{"modelId":"{m}"}}}}"#))
+            .unwrap_or_default();
+        format!(
+            r#"{{"method":"session/update","params":{{"sessionId":"s1","update":{{"sessionUpdate":"agent_message_chunk"{model_meta}}},"_meta":{{"totalTokens":{total},"agentTimestampMs":{ts_ms}}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn grok_tail_emits_positive_total_token_deltas() {
+        let path = temp_jsonl_path("grok-delta");
+        let lines = [
+            grok_line(100, Some("grok-4.5"), 1_700_000_000_000),
+            grok_line(250, None, 1_700_000_001_000),
+            grok_line(250, None, 1_700_000_002_000),
+            grok_line(300, None, 1_700_000_003_000),
+        ]
+        .join("\n");
+        fs::write(&path, lines).unwrap();
+
+        let tailer = UsageTailer::new();
+        let size = fs::metadata(&path).unwrap().len();
+        let added = tailer.read_growth(&path, ClientKind::Grok, 0, size, now_ms());
+
+        // Full-file read (start=0): first total is a delta from 0, then
+        // +150 and +50 → 3 events.
+        assert_eq!(added, 3);
+        assert_eq!(
+            tailer.files.lock().get(&path).unwrap().grok_last_total,
+            Some(300)
+        );
+        assert_eq!(
+            tailer
+                .files
+                .lock()
+                .get(&path)
+                .unwrap()
+                .grok_model
+                .as_deref(),
+            Some("grok-4.5")
+        );
+        // Re-read with recent timestamps for the live trace assertion.
+        let path2 = temp_jsonl_path("grok-delta-live");
+        let now = now_ms();
+        let live = [
+            grok_line(100, Some("grok-4.5"), now - 5_000),
+            grok_line(180, None, now - 2_000),
+        ]
+        .join("\n");
+        fs::write(&path2, live).unwrap();
+        let size2 = fs::metadata(&path2).unwrap().len();
+        let added2 = tailer.read_growth(&path2, ClientKind::Grok, 0, size2, now);
+        // first 100 from 0 + 80 growth
+        assert_eq!(added2, 2);
+        let trace = tailer.trace(3600);
+        let grok = trace.iter().find(|b| b.client == CLIENT_GROK).unwrap();
+        assert_eq!(grok.tokens, 180);
+        assert_eq!(grok.model, "grok-4.5");
+
+        // Transient dip below high-water: ignored, high-water kept, recovery
+        // does not emit a double-count delta until past 500.
+        let path3 = temp_jsonl_path("grok-dip");
+        let dip = [
+            grok_line(500, Some("grok-4.5"), now - 4_000),
+            grok_line(120, None, now - 3_000),
+            grok_line(200, None, now - 2_000),
+            grok_line(520, None, now - 1_000),
+        ]
+        .join("\n");
+        fs::write(&path3, dip).unwrap();
+        {
+            let mut files = tailer.files.lock();
+            files.insert(
+                path3.clone(),
+                FileState {
+                    offset: 0,
+                    mtime_ms: now,
+                    codex_model: None,
+                    grok_last_total: Some(500),
+                    grok_model: Some("grok-4.5".into()),
+                },
+            );
+        }
+        let size3 = fs::metadata(&path3).unwrap().len();
+        let added3 = tailer.read_growth(&path3, ClientKind::Grok, 0, size3, now);
+        // 500==seed skip; 120/200 ignored; 520 → +20 only.
+        assert_eq!(added3, 1);
+        assert_eq!(
+            tailer.files.lock().get(&path3).unwrap().grok_last_total,
+            Some(520)
+        );
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path2);
+        let _ = fs::remove_file(path3);
     }
 }

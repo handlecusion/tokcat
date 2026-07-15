@@ -189,6 +189,7 @@ fn collect_messages() -> Vec<UsageMessage> {
     messages.extend(parse_amp());
     messages.extend(parse_droid());
     messages.extend(parse_hermes());
+    messages.extend(parse_grok());
 
     dedup_messages(messages)
         .into_iter()
@@ -1540,6 +1541,491 @@ fn parse_hermes() -> Vec<UsageMessage> {
     parse_hermes_db(&path)
 }
 
+/// Grok Build session parser.
+///
+/// Grok writes JSON-RPC session updates under
+/// `$GROK_HOME/sessions/<urlencoded-workspace>/<session-id>/updates.jsonl`
+/// (default home: `~/.grok`). Logs expose a cumulative `totalTokens`
+/// counter without a stable input/output split, so per-turn positive
+/// total-token deltas are recorded as input tokens. Sibling
+/// `signals.json` may report totals that include compaction history;
+/// any remainder is reconciled as a separate message so compacted
+/// sessions are not under-counted.
+fn parse_grok() -> Vec<UsageMessage> {
+    let Some(home) = grok_home() else {
+        return Vec::new();
+    };
+    let sessions = home.join("sessions");
+    if !sessions.is_dir() {
+        return Vec::new();
+    }
+    collect_files(&sessions, |p| {
+        p.file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|name| name == "updates.jsonl")
+    })
+    .into_iter()
+    .flat_map(|p| parse_grok_updates_file(&p))
+    .collect()
+}
+
+fn grok_home() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("GROK_HOME") {
+        let p = PathBuf::from(home);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    let p = home_dir()?.join(".grok");
+    p.is_dir().then_some(p)
+}
+
+const GROK_UNKNOWN_MODEL: &str = "grok-unknown";
+
+#[derive(Debug, Clone)]
+struct GrokMetadata {
+    session_id: String,
+    /// Percent-encoded workspace directory name under `sessions/`
+    /// (e.g. `%2FUsers%2F…`). Used in dedup keys so the same session id
+    /// under different cwd roots does not collide globally.
+    workspace_key: String,
+    model_id: Option<String>,
+    timestamp_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+struct GrokActiveTurn {
+    baseline_total: i64,
+    max_total: i64,
+    timestamp_ms: i64,
+    model_id: String,
+    turn_index: usize,
+}
+
+impl GrokActiveTurn {
+    fn new(baseline_total: i64, timestamp_ms: i64, model_id: String, turn_index: usize) -> Self {
+        Self {
+            baseline_total,
+            max_total: baseline_total,
+            timestamp_ms,
+            model_id,
+            turn_index,
+        }
+    }
+
+    fn observe_total(&mut self, total: i64, timestamp_ms: i64) {
+        if total > self.max_total {
+            self.max_total = total;
+            self.timestamp_ms = timestamp_ms;
+        }
+    }
+
+    fn into_message(self, metadata: &GrokMetadata) -> Option<UsageMessage> {
+        let token_delta = self.max_total.saturating_sub(self.baseline_total);
+        if token_delta <= 0 {
+            return None;
+        }
+        let model_id = if self.model_id.trim().is_empty() {
+            GROK_UNKNOWN_MODEL.to_string()
+        } else {
+            self.model_id
+        };
+        let mut msg = UsageMessage::new(
+            "grok",
+            model_id,
+            "xai",
+            self.timestamp_ms,
+            TokenBreakdown {
+                input: token_delta,
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            0.0,
+        );
+        msg.dedup_key = Some(format!(
+            "grok:{}:{}:{}",
+            metadata.workspace_key, metadata.session_id, self.turn_index
+        ));
+        Some(msg)
+    }
+}
+
+fn parse_grok_updates_file(path: &Path) -> Vec<UsageMessage> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("updates.jsonl") {
+        return Vec::new();
+    }
+
+    let metadata = read_grok_metadata(path);
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut messages = Vec::new();
+    let mut current_model = metadata
+        .model_id
+        .clone()
+        .unwrap_or_else(|| GROK_UNKNOWN_MODEL.to_string());
+    let mut last_total: Option<i64> = None;
+    let mut last_total_timestamp = metadata.timestamp_ms;
+    let mut active_turn: Option<GrokActiveTurn> = None;
+    let mut turn_index = 0usize;
+
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+
+        if let Some(model_id) = extract_grok_model_id(&value) {
+            current_model = model_id;
+            if let Some(turn) = active_turn.as_mut() {
+                if turn.model_id == GROK_UNKNOWN_MODEL {
+                    turn.model_id = current_model.clone();
+                }
+            }
+        }
+
+        let timestamp = extract_grok_timestamp_ms(&value).unwrap_or(metadata.timestamp_ms);
+        if is_grok_user_message_chunk(&value) {
+            if let Some(turn) = active_turn.take() {
+                if let Some(message) = turn.into_message(&metadata) {
+                    messages.push(message);
+                }
+            }
+            active_turn = Some(GrokActiveTurn::new(
+                last_total.unwrap_or(0),
+                timestamp,
+                current_model.clone(),
+                turn_index,
+            ));
+            turn_index = turn_index.saturating_add(1);
+        }
+
+        let Some(total_tokens) = extract_grok_total_tokens(&value) else {
+            continue;
+        };
+        if total_tokens < 0 {
+            continue;
+        }
+
+        match last_total {
+            Some(previous) if total_tokens < previous => {
+                // Transient stream rewinds can dip below the high-water mark.
+                // Keep last_total so recovering totals are not double-counted;
+                // compaction remainder is reconciled via signals.json.
+                continue;
+            }
+            Some(previous) if total_tokens == previous => {
+                last_total_timestamp = timestamp;
+            }
+            Some(previous) => {
+                if active_turn.is_none() {
+                    active_turn = Some(GrokActiveTurn::new(
+                        previous,
+                        timestamp,
+                        current_model.clone(),
+                        turn_index,
+                    ));
+                    turn_index = turn_index.saturating_add(1);
+                }
+                if let Some(turn) = active_turn.as_mut() {
+                    turn.observe_total(total_tokens, timestamp);
+                }
+                last_total_timestamp = timestamp;
+                last_total = Some(total_tokens);
+            }
+            None => {
+                if let Some(turn) = active_turn.as_mut() {
+                    turn.observe_total(total_tokens, timestamp);
+                }
+                last_total_timestamp = timestamp;
+                last_total = Some(total_tokens);
+            }
+        }
+    }
+
+    if let Some(turn) = active_turn {
+        if let Some(message) = turn.into_message(&metadata) {
+            messages.push(message);
+        }
+    }
+
+    if messages.is_empty() {
+        if let Some(total_tokens) = last_total.filter(|tokens| *tokens > 0) {
+            let aggregate_turn = GrokActiveTurn {
+                baseline_total: 0,
+                max_total: total_tokens,
+                timestamp_ms: last_total_timestamp,
+                model_id: current_model.clone(),
+                turn_index: 0,
+            };
+            if let Some(message) = aggregate_turn.into_message(&metadata) {
+                messages.push(message);
+            }
+        }
+    }
+
+    append_grok_signals_reconciliation(path, &metadata, &mut messages, &current_model);
+    messages
+}
+
+fn read_grok_metadata(path: &Path) -> GrokMetadata {
+    let session_dir = path.parent();
+    let session_id = session_dir
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    // sessions/<urlencoded-workspace>/<session-id>/updates.jsonl
+    let workspace_key = session_dir
+        .and_then(|dir| dir.parent())
+        .and_then(|workspace_dir| workspace_dir.file_name())
+        .and_then(|name| name.to_str())
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let fallback_timestamp = file_modified_timestamp_ms(path);
+    let mut metadata = GrokMetadata {
+        session_id,
+        workspace_key,
+        model_id: None,
+        timestamp_ms: fallback_timestamp,
+    };
+
+    if let Some(summary_path) = grok_sibling(path, "summary.json") {
+        read_grok_summary_metadata(&summary_path, &mut metadata);
+    }
+    // events.jsonl is a compact session journal; use it only as a fallback
+    // when summary is missing model/session identity (tokscale parity).
+    if metadata.model_id.is_none() || metadata.session_id == "unknown" {
+        if let Some(events_path) = grok_sibling(path, "events.jsonl") {
+            read_grok_events_metadata(&events_path, &mut metadata);
+        }
+    }
+    if let Some(signals_path) = grok_sibling(path, "signals.json") {
+        read_grok_signals_metadata(&signals_path, &mut metadata);
+    }
+
+    metadata
+}
+
+fn read_grok_events_metadata(path: &Path, metadata: &mut GrokMetadata) {
+    let Ok(file) = fs::File::open(path) else {
+        return;
+    };
+    for line in BufReader::new(file).lines().map_while(Result::ok).take(500) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if metadata.model_id.is_none() {
+            metadata.model_id = string_value(value.get("model_id"))
+                .or_else(|| string_value(value.get("modelId")));
+        }
+        if metadata.session_id == "unknown" {
+            if let Some(session_id) = string_value(value.get("session_id"))
+                .or_else(|| string_value(value.get("sessionId")))
+            {
+                metadata.session_id = session_id;
+            }
+        }
+        if let Some(timestamp) = timestamp_ms_from_value(value.get("ts"))
+            .or_else(|| timestamp_ms_from_value(value.get("timestamp")))
+        {
+            metadata.timestamp_ms = timestamp;
+        }
+        if metadata.model_id.is_some() && metadata.session_id != "unknown" {
+            break;
+        }
+    }
+}
+
+fn read_grok_summary_metadata(path: &Path, metadata: &mut GrokMetadata) {
+    let Ok(data) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&data) else {
+        return;
+    };
+
+    if metadata.model_id.is_none() {
+        metadata.model_id = string_value(value.get("current_model_id"))
+            .or_else(|| string_value(value.get("model_id")));
+    }
+    if let Some(timestamp) = timestamp_ms_from_value(value.get("updated_at"))
+        .or_else(|| timestamp_ms_from_value(value.get("created_at")))
+        .or_else(|| timestamp_ms_from_value(value.get("last_active_at")))
+    {
+        metadata.timestamp_ms = timestamp;
+    }
+}
+
+fn read_grok_signals_metadata(path: &Path, metadata: &mut GrokMetadata) {
+    let Ok(data) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&data) else {
+        return;
+    };
+    if metadata.model_id.is_none() {
+        metadata.model_id = model_id_from_grok_signals(&value);
+    }
+}
+
+fn model_id_from_grok_signals(value: &Value) -> Option<String> {
+    string_value(value.get("primaryModelId")).or_else(|| {
+        value
+            .get("modelsUsed")
+            .and_then(|models| models.as_array())
+            .and_then(|models| models.first())
+            .and_then(|model| string_value(Some(model)))
+    })
+}
+
+fn non_negative_i64(value: Option<&Value>) -> i64 {
+    i64_value(value).unwrap_or(0).max(0)
+}
+
+fn effective_total_from_grok_signals(value: &Value) -> i64 {
+    let before = non_negative_i64(value.get("totalTokensBeforeCompaction"));
+    let total = non_negative_i64(value.get("totalTokens"));
+    match value.get("contextTokensUsed") {
+        None => before.saturating_add(total),
+        Some(ctx) => total.max(before.saturating_add(non_negative_i64(Some(ctx)))),
+    }
+}
+
+fn append_grok_signals_reconciliation(
+    updates_path: &Path,
+    metadata: &GrokMetadata,
+    messages: &mut Vec<UsageMessage>,
+    fallback_model: &str,
+) {
+    let Some(signals_path) = grok_sibling(updates_path, "signals.json") else {
+        return;
+    };
+    let Ok(data) = fs::read_to_string(&signals_path) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&data) else {
+        return;
+    };
+
+    let signals_total = effective_total_from_grok_signals(&value);
+    if signals_total <= 0 {
+        return;
+    }
+
+    let updates_total: i64 = messages.iter().map(|message| message.tokens.input).sum();
+    let extra = signals_total.saturating_sub(updates_total);
+    if extra <= 0 {
+        return;
+    }
+
+    let model_id = model_id_from_grok_signals(&value)
+        .filter(|model| !model.trim().is_empty())
+        .or_else(|| metadata.model_id.clone())
+        .unwrap_or_else(|| fallback_model.to_string());
+    // Anchor the reconciliation delta to the last recorded update activity
+    // rather than signals.json mtime, so live-session rewrites do not migrate
+    // multi-million-token extras onto a new day on each rescan.
+    let timestamp = messages
+        .iter()
+        .map(|message| message.timestamp_ms)
+        .max()
+        .unwrap_or(metadata.timestamp_ms);
+
+    let mut msg = UsageMessage::new(
+        "grok",
+        model_id,
+        "xai",
+        timestamp,
+        TokenBreakdown {
+            input: extra,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            reasoning: 0,
+        },
+        0.0,
+    );
+    msg.dedup_key = Some(format!(
+        "grok:{}:{}:signals",
+        metadata.workspace_key, metadata.session_id
+    ));
+    messages.push(msg);
+}
+
+fn grok_sibling(path: &Path, file_name: &str) -> Option<PathBuf> {
+    Some(path.parent()?.join(file_name))
+}
+
+fn json_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    path.iter()
+        .try_fold(value, |current, key| current.get(*key))
+}
+
+fn extract_grok_model_id(value: &Value) -> Option<String> {
+    for path in [
+        &["params", "update", "content", "_meta", "modelId"][..],
+        &["params", "update", "_meta", "modelId"][..],
+        &["params", "_meta", "modelId"][..],
+        &["params", "modelId"][..],
+        &["model_id"][..],
+        &["modelId"][..],
+        &["model"][..],
+    ] {
+        if let Some(model_id) = string_value(json_path(value, path)) {
+            if !model_id.trim().is_empty() {
+                return Some(model_id);
+            }
+        }
+    }
+    None
+}
+
+fn extract_grok_total_tokens(value: &Value) -> Option<i64> {
+    for path in [
+        &["params", "_meta", "totalTokens"][..],
+        &["params", "update", "_meta", "totalTokens"][..],
+        &["params", "update", "totalTokens"][..],
+        &["params", "totalTokens"][..],
+        &["usage", "totalTokens"][..],
+        &["totalTokens"][..],
+    ] {
+        if let Some(total) = i64_value(json_path(value, path)) {
+            return Some(total);
+        }
+    }
+    None
+}
+
+fn extract_grok_timestamp_ms(value: &Value) -> Option<i64> {
+    for path in [
+        &["params", "_meta", "agentTimestampMs"][..],
+        &["params", "update", "_meta", "agentTimestampMs"][..],
+        &["params", "timestamp"][..],
+        &["timestamp"][..],
+        &["ts"][..],
+    ] {
+        if let Some(timestamp) = timestamp_ms_from_value(json_path(value, path)) {
+            return Some(timestamp);
+        }
+    }
+    None
+}
+
+fn is_grok_user_message_chunk(value: &Value) -> bool {
+    json_path(value, &["params", "update", "sessionUpdate"]).and_then(|v| v.as_str())
+        == Some("user_message_chunk")
+}
+
 fn parse_hermes_db(path: &Path) -> Vec<UsageMessage> {
     let conn = match Connection::open_with_flags(
         path,
@@ -2204,16 +2690,18 @@ fn bundled_price(model: &str, provider: &str) -> Price {
     if normalized.contains("kimi-k2-5") {
         return Price::new(0.6, 3.0, 0.1, 0.0);
     }
-    if terminal == "composer-1" {
+    // Grok Build sometimes prefixes Composer ids as `grok-composer-*`.
+    let composer_id = terminal.strip_prefix("grok-").unwrap_or(terminal);
+    if composer_id == "composer-1" {
         return Price::new(1.25, 10.0, 0.125, 0.0);
     }
-    if terminal == "composer-1-5" {
+    if composer_id == "composer-1-5" {
         return Price::new(3.5, 17.5, 0.35, 0.0);
     }
-    if terminal == "composer-2" || terminal == "composer-2-5" {
+    if composer_id == "composer-2" || composer_id == "composer-2-5" {
         return Price::new(0.5, 2.5, 0.2, 0.0);
     }
-    if terminal == "composer-2-fast" || terminal == "composer-2-5-fast" {
+    if composer_id == "composer-2-fast" || composer_id == "composer-2-5-fast" {
         return Price::new(1.5, 7.5, 0.35, 0.0);
     }
     if normalized.contains("gemini-3-5-flash") {
@@ -2255,10 +2743,38 @@ fn bundled_price(model: &str, provider: &str) -> Price {
     if m.contains("gemini") {
         return Price::new(1.25, 10.0, 0.125, 0.0);
     }
+    // xAI Grok family — API list prices (per 1M tokens). SuperGrok /
+    // subscription usage still gets an estimated API-equivalent cost so
+    // multi-client dashboards stay comparable.
+    if normalized.contains("grok-4-5") || terminal.contains("grok-4.5") {
+        return Price::new(2.0, 6.0, 0.5, 0.0);
+    }
+    if normalized.contains("grok-4-3") || terminal.contains("grok-4.3") {
+        return Price::new(1.25, 2.5, 0.2, 0.0);
+    }
+    if normalized.contains("grok-4-1-fast")
+        || terminal.contains("grok-4.1-fast")
+        || normalized.contains("grok-4-1")
+    {
+        return Price::new(0.2, 0.5, 0.05, 0.0);
+    }
+    if normalized.contains("grok-4") || terminal.starts_with("grok-4") {
+        return Price::new(3.0, 15.0, 0.75, 0.0);
+    }
+    if normalized.contains("grok-3-mini") || terminal.contains("grok-3-mini") {
+        return Price::new(0.3, 0.5, 0.075, 0.0);
+    }
+    if normalized.contains("grok-3") || terminal.starts_with("grok-3") {
+        return Price::new(3.0, 15.0, 0.75, 0.0);
+    }
+    if m.contains("grok") {
+        return Price::new(2.0, 6.0, 0.5, 0.0);
+    }
     match provider {
         "anthropic" => Price::new(3.0, 15.0, 0.3, 3.75),
         "openai" => Price::new(1.25, 10.0, 0.125, 0.0),
         "google" => Price::new(1.25, 10.0, 0.125, 0.0),
+        "xai" => Price::new(2.0, 6.0, 0.5, 0.0),
         _ => Price::new(0.0, 0.0, 0.0, 0.0),
     }
 }
@@ -2745,5 +3261,235 @@ mod tests {
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir(parent);
         }
+    }
+
+    fn write_grok_fixture(
+        name: &str,
+        updates_jsonl: &str,
+        summary_json: Option<&str>,
+        signals_json: Option<&str>,
+    ) -> (PathBuf, PathBuf) {
+        // Include a per-call nonce so parallel tests never share a directory.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tokcat-grok-{}-{}-{}-{}",
+            name,
+            std::process::id(),
+            now_ms(),
+            nonce
+        ));
+        let session_dir = root
+            .join(".grok")
+            .join("sessions")
+            .join("%2Ftmp%2Fproject")
+            .join("session-1");
+        fs::create_dir_all(&session_dir).unwrap();
+        let updates_path = session_dir.join("updates.jsonl");
+        fs::write(&updates_path, updates_jsonl).unwrap();
+        if let Some(summary_json) = summary_json {
+            fs::write(session_dir.join("summary.json"), summary_json).unwrap();
+        }
+        if let Some(signals_json) = signals_json {
+            fs::write(session_dir.join("signals.json"), signals_json).unwrap();
+        }
+        (root, updates_path)
+    }
+
+    fn cleanup_grok_fixture(root: &Path) {
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parses_grok_total_token_deltas_by_turn() {
+        let (root, path) = write_grok_fixture(
+            "by-turn",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"available_commands_update"},"_meta":{"totalTokens":100,"agentTimestampMs":1700000000000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.5"}}},"_meta":{"agentTimestampMs":1700000001000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_thought_chunk"},"_meta":{"totalTokens":250,"agentTimestampMs":1700000002000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":300,"agentTimestampMs":1700000003000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.5"}}},"_meta":{"agentTimestampMs":1700000004000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":450,"agentTimestampMs":1700000005000}}}"#,
+            Some(
+                r#"{"current_model_id":"grok-4.5","updated_at":"2023-11-14T22:13:20Z"}"#,
+            ),
+            None,
+        );
+
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].client, "grok");
+        assert_eq!(messages[0].model_id, "grok-4.5");
+        assert_eq!(messages[0].provider_id, "xai");
+        assert_eq!(messages[0].tokens.input, 200);
+        assert_eq!(messages[0].tokens.output, 0);
+        assert_eq!(messages[0].timestamp_ms, 1700000003000);
+        assert_eq!(
+            messages[0].dedup_key.as_deref(),
+            Some("grok:%2Ftmp%2Fproject:session-1:0")
+        );
+        assert_eq!(messages[1].tokens.input, 150);
+        assert_eq!(messages[1].timestamp_ms, 1700000005000);
+    }
+
+    #[test]
+    fn grok_uses_summary_model_when_update_model_is_missing() {
+        let (root, path) = write_grok_fixture(
+            "summary-model",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk"},"_meta":{"agentTimestampMs":1700000000000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":220,"agentTimestampMs":1700000001000}}}"#,
+            Some(
+                r#"{"current_model_id":"grok-4.5","updated_at":"2023-11-14T22:13:20Z"}"#,
+            ),
+            None,
+        );
+
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "grok-4.5");
+        assert_eq!(messages[0].tokens.input, 220);
+    }
+
+    #[test]
+    fn grok_ignores_repeated_and_decreasing_total_tokens() {
+        let (root, path) = write_grok_fixture(
+            "monotonic",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"available_commands_update"},"_meta":{"totalTokens":100,"agentTimestampMs":1700000000000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.5"}}},"_meta":{"agentTimestampMs":1700000001000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":150,"agentTimestampMs":1700000002000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":150,"agentTimestampMs":1700000003000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":120,"agentTimestampMs":1700000004000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":200,"agentTimestampMs":1700000005000}}}"#,
+            None,
+            None,
+        );
+
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+
+        // Dip to 120 is ignored without lowering the high-water mark, so the
+        // final 200 yields one turn delta of 100 (200 - baseline 100).
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 100);
+        assert_eq!(messages[0].timestamp_ms, 1700000005000);
+    }
+
+    #[test]
+    fn grok_adds_signals_reconciliation_when_compaction_exceeds_updates() {
+        let (root, path) = write_grok_fixture(
+            "signals",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.5"}}},"_meta":{"agentTimestampMs":1700000000000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":171056,"agentTimestampMs":1700000001000}}}"#,
+            None,
+            Some(
+                r#"{"primaryModelId":"grok-4.5","totalTokensBeforeCompaction":3224659,"contextTokensUsed":172309}"#,
+            ),
+        );
+
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tokens.input, 171056);
+        assert_eq!(messages[1].tokens.input, 3225912);
+        assert_eq!(messages[1].model_id, "grok-4.5");
+        assert_eq!(
+            messages[1].dedup_key.as_deref(),
+            Some("grok:%2Ftmp%2Fproject:session-1:signals")
+        );
+        assert_eq!(messages[1].timestamp_ms, 1700000001000);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.tokens.input)
+                .sum::<i64>(),
+            3396968
+        );
+    }
+
+    #[test]
+    fn bundled_price_matches_current_grok_family() {
+        assert_price("grok-4.5", "xai", Price::new(2.0, 6.0, 0.5, 0.0));
+        assert_price("grok-4.3", "xai", Price::new(1.25, 2.5, 0.2, 0.0));
+        assert_price("grok-4.1-fast", "xai", Price::new(0.2, 0.5, 0.05, 0.0));
+        assert_price("grok-4", "xai", Price::new(3.0, 15.0, 0.75, 0.0));
+        assert_price("xai/grok-unknown", "xai", Price::new(2.0, 6.0, 0.5, 0.0));
+        // Grok-prefixed Composer ids must hit Composer prices, not xAI default.
+        assert_price(
+            "grok-composer-2.5",
+            "xai",
+            Price::new(0.5, 2.5, 0.2, 0.0),
+        );
+        assert_price(
+            "grok-composer-2.5-fast",
+            "xai",
+            Price::new(1.5, 7.5, 0.35, 0.0),
+        );
+    }
+
+    #[test]
+    fn grok_preserves_total_tokens_without_model_metadata() {
+        let (root, path) = write_grok_fixture(
+            "no-model",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"available_commands_update"},"_meta":{"totalTokens":120,"agentTimestampMs":1700000000000}}}"#,
+            None,
+            None,
+        );
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, GROK_UNKNOWN_MODEL);
+        assert_eq!(messages[0].tokens.input, 120);
+        assert_eq!(messages[0].timestamp_ms, 1700000000000);
+    }
+
+    #[test]
+    fn grok_skips_signals_reconciliation_when_updates_cover_total() {
+        let (root, path) = write_grok_fixture(
+            "signals-covered",
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk"},"_meta":{"agentTimestampMs":1700000000000}}}
+{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":500,"agentTimestampMs":1700000001000}}}"#,
+            None,
+            Some(r#"{"primaryModelId":"grok-4.5","contextTokensUsed":400}"#),
+        );
+        let messages = parse_grok_updates_file(&path);
+        cleanup_grok_fixture(&root);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].tokens.input, 500);
+    }
+
+    #[test]
+    fn grok_events_jsonl_supplies_model_when_summary_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "tokcat-grok-events-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let session_dir = root
+            .join(".grok")
+            .join("sessions")
+            .join("%2Ftmp%2Fproject")
+            .join("session-1");
+        fs::create_dir_all(&session_dir).unwrap();
+        let updates = session_dir.join("updates.jsonl");
+        fs::write(
+            &updates,
+            r#"{"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":90,"agentTimestampMs":1700000001000}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("events.jsonl"),
+            r#"{"model_id":"grok-4.5","session_id":"session-1","ts":1700000000000}"#,
+        )
+        .unwrap();
+        let messages = parse_grok_updates_file(&updates);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].model_id, "grok-4.5");
+        assert_eq!(messages[0].tokens.input, 90);
     }
 }
