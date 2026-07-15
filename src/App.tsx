@@ -375,7 +375,11 @@ export default function App() {
   // Push tray title from the all-agent overview, regardless of the visible tab.
   useEffect(() => {
     if (!isTauri()) return
-    const title = computeTrayTitle(settings.trayMode, overviewStats, tokensPerMin)
+    const title = computeTrayTitle(settings.trayMode, overviewStats, tokensPerMin, agentUsage.payload, {
+      provider: settings.planProvider,
+      window: settings.planWindow,
+      displayMode: settings.planDisplayMode,
+    })
     ;(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core')
@@ -384,7 +388,15 @@ export default function App() {
         // ignore
       }
     })()
-  }, [overviewStats, settings.trayMode, tokensPerMin])
+  }, [
+    overviewStats,
+    settings.trayMode,
+    tokensPerMin,
+    agentUsage.payload,
+    settings.planProvider,
+    settings.planWindow,
+    settings.planDisplayMode,
+  ])
 
   // Push animateTray flag to backend whenever it changes (Tauri only).
   useEffect(() => {
@@ -556,6 +568,7 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onChange={setSettings}
+        agentUsage={agentUsage.payload}
       />
       {aboutOpen && (
         <>

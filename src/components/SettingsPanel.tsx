@@ -2,10 +2,14 @@ import React, { useEffect, useState } from 'react'
 import {
   AnimationStyle,
   ANIMATION_STYLE_LABELS,
+  PlanDisplayMode,
+  PlanProvider,
+  PLAN_PROVIDER_LABELS,
   Settings,
   TrayMode,
   TRAY_MODE_LABELS,
 } from '../lib/settings'
+import type { AgentUsagePayload } from '../lib/agentUsage'
 import { isTauri } from '../lib/runtime'
 import { checkForUpdatesInteractive } from '../lib/updater'
 
@@ -14,6 +18,7 @@ interface Props {
   onClose: () => void
   settings: Settings
   onChange: (s: Settings) => void
+  agentUsage?: AgentUsagePayload | null
 }
 
 function SwitchToggle({
@@ -47,7 +52,19 @@ function CheckIcon() {
   )
 }
 
-export function SettingsPanel({ open, onClose, settings, onChange }: Props) {
+const PLAN_PROVIDER_OPTIONS: { id: PlanProvider; label: string }[] = [
+  { id: 'auto', label: 'Auto — most constrained' },
+  { id: 'claude', label: PLAN_PROVIDER_LABELS.claude },
+  { id: 'codex', label: PLAN_PROVIDER_LABELS.codex },
+  { id: 'grok', label: PLAN_PROVIDER_LABELS.grok },
+]
+
+const PLAN_DISPLAY_OPTIONS: { id: PlanDisplayMode; label: string }[] = [
+  { id: 'used', label: '% used' },
+  { id: 'left', label: '% left' },
+]
+
+export function SettingsPanel({ open, onClose, settings, onChange, agentUsage }: Props) {
   const [autostartBusy, setAutostartBusy] = useState(false)
   const [version, setVersion] = useState<string>('')
   const [updateBusy, setUpdateBusy] = useState(false)
@@ -135,8 +152,29 @@ export function SettingsPanel({ open, onClose, settings, onChange }: Props) {
     'total_tokens',
     'total_cost',
     'tokens_per_min',
+    'plan_percent',
     'hidden',
   ]
+
+  // Snapshots for plan-capable providers that actually have windows right now.
+  // Drives which providers are selectable and which windows can be pinned.
+  const planSnapshots = new Map(
+    (agentUsage?.agents ?? []).filter(a => a.windows.length > 0).map(a => [a.clientId, a]),
+  )
+  const windowsFor = (provider: PlanProvider): string[] =>
+    provider === 'auto' ? [] : planSnapshots.get(provider)?.windows.map(w => w.label) ?? []
+
+  const selectPlanProvider = (provider: PlanProvider) => {
+    if (provider === 'auto') {
+      onChange({ ...settings, planProvider: provider })
+      return
+    }
+    // Pin a valid window for the chosen provider: keep the current one if it
+    // still exists, else default to the provider's first window.
+    const wins = windowsFor(provider)
+    const planWindow = wins.includes(settings.planWindow) ? settings.planWindow : wins[0] ?? settings.planWindow
+    onChange({ ...settings, planProvider: provider, planWindow })
+  }
 
   return (
     <>
@@ -170,6 +208,81 @@ export function SettingsPanel({ open, onClose, settings, onChange }: Props) {
               })}
             </div>
           </section>
+
+          {settings.trayMode === 'plan_percent' && (
+            <section className="settings-section">
+              <div className="settings-label">Plan source</div>
+              <div className="settings-group">
+                {PLAN_PROVIDER_OPTIONS.map(opt => {
+                  const active = settings.planProvider === opt.id
+                  // Specific providers are only selectable once their quota has
+                  // loaded; Auto is always available.
+                  const available = opt.id === 'auto' || planSnapshots.has(opt.id)
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`settings-row settings-row-radio${active ? ' is-active' : ''}`}
+                      onClick={() => available && selectPlanProvider(opt.id)}
+                      disabled={!available}
+                      aria-pressed={active}
+                    >
+                      <span className="settings-row-label">
+                        {opt.label}
+                        {!available && <span className="settings-row-meta"> · no data yet</span>}
+                      </span>
+                      <span className="settings-row-check">{active && <CheckIcon />}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {settings.planProvider !== 'auto' && (
+                <div className="settings-group">
+                  {windowsFor(settings.planProvider).length === 0 ? (
+                    <div className="settings-row">
+                      <span className="settings-row-label settings-row-meta">No windows available yet</span>
+                    </div>
+                  ) : (
+                    windowsFor(settings.planProvider).map(label => {
+                      const active = settings.planWindow === label
+                      return (
+                        <button
+                          key={label}
+                          type="button"
+                          className={`settings-row settings-row-radio${active ? ' is-active' : ''}`}
+                          onClick={() => onChange({ ...settings, planWindow: label })}
+                          aria-pressed={active}
+                        >
+                          <span className="settings-row-label">{label}</span>
+                          <span className="settings-row-check">{active && <CheckIcon />}</span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+
+              <div className="settings-label">Display</div>
+              <div className="settings-group">
+                {PLAN_DISPLAY_OPTIONS.map(opt => {
+                  const active = settings.planDisplayMode === opt.id
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`settings-row settings-row-radio${active ? ' is-active' : ''}`}
+                      onClick={() => onChange({ ...settings, planDisplayMode: opt.id })}
+                      aria-pressed={active}
+                    >
+                      <span className="settings-row-label">{opt.label}</span>
+                      <span className="settings-row-check">{active && <CheckIcon />}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          )}
 
           {tauri && (
             <section className="settings-section">
