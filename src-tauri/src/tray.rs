@@ -2,7 +2,8 @@ use crate::GraphPayload;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, PhysicalSize, Runtime,
+    WebviewWindow,
 };
 
 pub const POPOVER_W: f64 = 640.0;
@@ -213,65 +214,60 @@ fn position_window_under_tray<R: Runtime>(
     tray: &tauri::tray::TrayIcon<R>,
     window: &WebviewWindow<R>,
 ) -> tauri::Result<()> {
-    // Status items live on the main (menu-bar) display, and `tray.rect()`
-    // reports the icon's PHYSICAL coordinates scaled by *that* display. Convert
-    // them back to logical points with the main display's scale factor — never
-    // the popover window's. On a mixed-DPI multi-monitor setup the hidden
-    // popover window may currently sit on a monitor whose scale differs from the
-    // menu bar's (e.g. window on a 1x external display, menu bar on the 2x
-    // built-in Retina); `window.scale_factor()` would then mis-scale the tray
-    // coordinates and fling the popover far from the icon.
     let window_scale = window.scale_factor().unwrap_or(1.0);
-    let main_monitor = window.primary_monitor().ok().flatten();
-    let tray_scale = main_monitor
-        .as_ref()
-        .map(|m| m.scale_factor())
-        .unwrap_or(window_scale);
+    let monitors = window.available_monitors().unwrap_or_default();
 
-    let tray_logical = tray.rect()?.map(|rect| {
-        let p: LogicalPosition<f64> = rect.position.to_logical(tray_scale);
-        let s: LogicalSize<f64> = rect.size.to_logical(tray_scale);
-        (p.x, p.y, s.width, s.height)
+    // Resolve the display the tray icon actually sits on. `tray.rect()` reports
+    // PHYSICAL coordinates scaled by whichever display currently owns the menu
+    // bar — and with "Displays have separate Spaces" that is the ACTIVE display,
+    // not necessarily the main one. We don't know that display's scale up front,
+    // so test every monitor: only the owning display's scale maps the physical
+    // point back inside that display's own bounds, within the menu-bar band at
+    // its top. Among candidates pick the one closest to the top (disambiguates
+    // overlapping mixed-DPI layouts). This keeps the popover on the same display
+    // as the menu bar the user just used, at that display's correct DPI — and a
+    // hidden / overflowed status item, whose window is parked off-screen, simply
+    // matches nothing and falls through to the fallback below.
+    let tray_anchor = tray.rect()?.and_then(|rect| {
+        let pp: PhysicalPosition<f64> = rect.position.to_physical(1.0);
+        let ps: PhysicalSize<f64> = rect.size.to_physical(1.0);
+        monitors
+            .iter()
+            .filter_map(|m| {
+                let s = m.scale_factor();
+                let (mx, my, mw, mh) = monitor_logical_bounds(m);
+                let lx = pp.x / s;
+                let ly = pp.y / s;
+                let within = lx >= mx && lx < mx + mw && ly >= my && ly < my + mh;
+                let below_top = ly - my;
+                if within && (-4.0..=MENU_BAR_H * 2.0).contains(&below_top) {
+                    Some((below_top, lx, ly, ps.width / s, ps.height / s, m.clone()))
+                } else {
+                    None
+                }
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, lx, ly, tw, th, m)| (lx, ly, tw, th, m))
     });
 
-    // A hidden / overflowed status item (crowded menu bar, notch) parks its
-    // window off-screen, so `tray.rect()` returns a bogus position — sometimes
-    // off every display, sometimes a garbage point that still falls inside a
-    // large external monitor's bounds. Only trust the tray position when it
-    // resolves to a real display AND sits at that display's top (where the menu
-    // bar, and thus every status item, lives). Otherwise the popover would be
-    // flung off-screen or left floating mid-screen. `tray_monitor` is the
-    // display the icon actually sits on.
-    let tray_monitor = tray_logical.and_then(|(tx, ty, _, _)| {
-        let mon = window.monitor_from_point(tx, ty).ok().flatten()?;
-        let (_mx, my, _mw, _mh) = monitor_logical_bounds(&mon);
-        // Real status items sit within the menu-bar band at the display's top.
-        let below_top = ty - my;
-        if (-4.0..=MENU_BAR_H * 2.0).contains(&below_top) {
-            Some(mon)
-        } else {
-            None
-        }
-    });
-
-    let (mut x, y, anchor_monitor) = match (tray_logical, tray_monitor) {
-        (Some((tx, ty, tw, th)), Some(mon)) => {
-            // Normal case: center the popover horizontally under the icon.
+    let (mut x, y, anchor_monitor) = match tray_anchor {
+        Some((tx, ty, tw, th, mon)) => {
+            // Center the popover horizontally under the icon.
             let x = tx + (tw - POPOVER_W) / 2.0;
             let y = ty + th + POPOVER_TRAY_GAP;
             (x, y, Some(mon))
         }
-        _ => {
-            // Fallback: the icon is hidden/off-screen. Dock the popover at the
-            // main display's menu-bar right corner (where status items live) so
-            // it is always visible and menu-bar-anchored, never floating in the
-            // middle or off-screen.
-            match &main_monitor {
+        None => {
+            // Tray hidden/unresolvable (crowded menu bar / notch overflow parks
+            // its window off-screen). Dock at the main display's menu-bar right
+            // corner so the popover is always visible and menu-bar-anchored,
+            // never floating mid-screen or off-screen.
+            match window.primary_monitor().ok().flatten() {
                 Some(mon) => {
-                    let (mx, my, mw, _mh) = monitor_logical_bounds(mon);
+                    let (mx, my, mw, _mh) = monitor_logical_bounds(&mon);
                     let x = mx + mw - POPOVER_W - POPOVER_SCREEN_MARGIN;
                     let y = my + MENU_BAR_H + POPOVER_TRAY_GAP;
-                    (x, y, main_monitor.clone())
+                    (x, y, Some(mon))
                 }
                 None => (POPOVER_SCREEN_MARGIN, MENU_BAR_H + POPOVER_TRAY_GAP, None),
             }
