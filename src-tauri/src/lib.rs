@@ -351,8 +351,18 @@ pub fn run() {
         // (e.g. running the binary directly, or `open -n`), this fires in the
         // already-running instance instead of starting a duplicate tray — we
         // surface the popover, mirroring the RunEvent::Reopen path below.
+        //
+        // The plugin runs this callback on its socket-listener task (a
+        // tokio-rt-worker thread), so it must NOT touch AppKit directly:
+        // show_popover orders/focuses the NSWindow, which is main-thread-only
+        // and traps ("Must only be used from the main thread") otherwise.
+        // Hop to the main thread first — unlike the RunEvent::Reopen path,
+        // which already runs on the main event loop.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            tray::show_popover(app);
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                tray::show_popover(&handle);
+            });
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
