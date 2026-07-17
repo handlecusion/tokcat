@@ -115,6 +115,8 @@ struct CodexUsageResponse {
     additional_rate_limits: Option<Vec<CodexAdditionalRateLimit>>,
     #[serde(default)]
     credits: Option<CodexCredits>,
+    #[serde(default)]
+    spend_control: Option<CodexSpendControl>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +150,26 @@ struct CodexCredits {
     unlimited: bool,
     #[serde(default, deserialize_with = "deserialize_optional_f64")]
     balance: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSpendControl {
+    #[serde(default)]
+    individual_limit: Option<CodexSpendLimit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSpendLimit {
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    limit: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    used: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    used_percent: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    remaining_percent: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    reset_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -470,6 +492,7 @@ async fn fetch_codex_inner() -> Result<AgentUsageSnapshot, String> {
     let windows = codex_windows(
         usage.rate_limit.as_ref(),
         usage.additional_rate_limits.as_deref(),
+        usage.spend_control.as_ref(),
         now,
     );
     if windows.is_empty() && usage.credits.as_ref().and_then(|c| c.balance).is_none() {
@@ -789,18 +812,16 @@ async fn refresh_claude_credentials(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("build Claude refresh client: {}", e))?;
+    let request_body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLAUDE_CLIENT_ID,
+    });
     let response = client
         .post(CLAUDE_REFRESH_URL)
         .header(reqwest::header::ACCEPT, "application/json")
-        .header(
-            reqwest::header::CONTENT_TYPE,
-            "application/x-www-form-urlencoded",
-        )
-        .body(form_urlencoded(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", CLAUDE_CLIENT_ID),
-        ]))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&request_body)
         .send()
         .await
         .map_err(|e| format!("Claude OAuth refresh failed: {}", e))?;
@@ -847,6 +868,7 @@ fn save_codex_credentials(credentials: &CodexCredentials) -> Result<(), String> 
 fn codex_windows(
     rate_limit: Option<&CodexRateLimit>,
     additional_rate_limits: Option<&[CodexAdditionalRateLimit]>,
+    spend_control: Option<&CodexSpendControl>,
     now: DateTime<Utc>,
 ) -> Vec<UsageWindow> {
     let mut windows = Vec::new();
@@ -885,7 +907,34 @@ fn codex_windows(
             windows.push(map_window(&label, window, now));
         }
     }
+    if let Some(window) = codex_spend_control_window(spend_control, now) {
+        windows.push(window);
+    }
     windows
+}
+
+fn codex_spend_control_window(
+    spend_control: Option<&CodexSpendControl>,
+    now: DateTime<Utc>,
+) -> Option<UsageWindow> {
+    let limit = spend_control?.individual_limit.as_ref()?;
+    let used_percent = limit
+        .used_percent
+        .or_else(|| limit.remaining_percent.map(|remaining| 100.0 - remaining))
+        .or_else(|| {
+            let used = limit.used?;
+            let total = limit.limit?;
+            (total > 0.0).then_some((used / total) * 100.0)
+        })?;
+    Some(map_window(
+        "Monthly spend",
+        CodexWindow {
+            used_percent,
+            reset_at: limit.reset_at.unwrap_or_default(),
+            limit_window_seconds: 0,
+        },
+        now,
+    ))
 }
 
 fn claude_windows(usage: &ClaudeUsageResponse, now: DateTime<Utc>) -> Vec<UsageWindow> {
@@ -1852,28 +1901,6 @@ fn claude_user_agent() -> String {
         .unwrap_or_else(|| "claude-code/2.1.0".to_string())
 }
 
-fn form_urlencoded(params: &[(&str, &str)]) -> String {
-    params
-        .iter()
-        .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn percent_encode(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            b' ' => encoded.push('+'),
-            _ => encoded.push_str(&format!("%{:02X}", byte)),
-        }
-    }
-    encoded
-}
-
 fn string_key(
     map: &serde_json::Map<String, Value>,
     snake_case: &str,
@@ -1962,6 +1989,18 @@ where
     })
 }
 
+fn deserialize_optional_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(Value::Number(n)) => n.as_i64(),
+        Some(Value::String(s)) => s.parse::<i64>().ok(),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2007,7 +2046,7 @@ mod tests {
                 limit_window_seconds: 604_800,
             }),
         };
-        let windows = codex_windows(Some(&rate_limit), None, now);
+        let windows = codex_windows(Some(&rate_limit), None, None, now);
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].label, "Session");
         assert_eq!(windows[0].remaining_percent, 92.0);
@@ -2030,10 +2069,72 @@ mod tests {
                 secondary_window: None,
             }),
         };
-        let windows = codex_windows(None, Some(&[extra]), now);
+        let windows = codex_windows(None, Some(&[extra]), None, now);
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].label, "Codex Spark");
         assert_eq!(windows[0].remaining_percent, 59.0);
+    }
+
+    #[test]
+    fn maps_codex_business_spend_control() {
+        let raw = r#"{
+            "plan_type": "business",
+            "rate_limit": null,
+            "additional_rate_limits": null,
+            "credits": {
+                "has_credits": true,
+                "unlimited": false,
+                "balance": "910"
+            },
+            "spend_control": {
+                "reached": false,
+                "individual_limit": {
+                    "source": "account_user_spend_controls",
+                    "limit": "1000",
+                    "used": "90",
+                    "remaining": "910",
+                    "used_percent": 9,
+                    "remaining_percent": 91,
+                    "reset_after_seconds": 1426374,
+                    "reset_at": 1785542400
+                }
+            }
+        }"#;
+        let usage: CodexUsageResponse = serde_json::from_str(raw).unwrap();
+        let now = Utc.timestamp_opt(1_768_435_200, 0).single().unwrap();
+        let windows = codex_windows(
+            usage.rate_limit.as_ref(),
+            usage.additional_rate_limits.as_deref(),
+            usage.spend_control.as_ref(),
+            now,
+        );
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].label, "Monthly spend");
+        assert_eq!(windows[0].used_percent, 9.0);
+        assert_eq!(windows[0].remaining_percent, 91.0);
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2026-08-01T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn derives_codex_spend_percent_when_api_omits_percentages() {
+        let spend_control = CodexSpendControl {
+            individual_limit: Some(CodexSpendLimit {
+                limit: Some(200.0),
+                used: Some(50.0),
+                used_percent: None,
+                remaining_percent: None,
+                reset_at: None,
+            }),
+        };
+        let now = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
+        let window = codex_spend_control_window(Some(&spend_control), now).unwrap();
+        assert_eq!(window.used_percent, 25.0);
+        assert_eq!(window.remaining_percent, 75.0);
+        assert_eq!(window.resets_at, None);
+        assert_eq!(window.reset_text, None);
     }
 
     #[test]
