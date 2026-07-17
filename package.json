@@ -16,7 +16,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "install:local": "tauri build && pkill -f '/Applications/Tokcat.app/Contents/MacOS' || true && rm -rf /Applications/Tokcat.app && cp -R src-tauri/target/release/bundle/macos/Tokcat.app /Applications/ && open -na /Applications/Tokcat.app"
+    "install:local": "tauri build && { pkill -f '/Applications/Tokcat.app/Contents/MacOS' || true; } && rm -rf /Applications/Tokcat.app && cp -R src-tauri/target/release/bundle/macos/Tokcat.app /Applications/ && open -na /Applications/Tokcat.app"
   },
   "dependencies": {
     "@react-three/drei": "^9.117.3",
