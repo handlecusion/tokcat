@@ -495,16 +495,36 @@ fn parse_codex() -> Vec<UsageMessage> {
     let codex_home = std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".codex"));
-    let mut roots = vec![
-        codex_home.join("sessions"),
-        codex_home.join("archived_sessions"),
-    ];
+    let mut codex_homes = vec![codex_home];
+    // Orca runs Codex with CODEX_HOME redirected to its own runtime home, so
+    // sessions started inside Orca never land in ~/.codex. The menubar app is
+    // launched from /Applications and doesn't inherit that env var, so scan
+    // Orca's known Codex homes directly to avoid under-counting Codex usage.
+    codex_homes.extend(orca_codex_homes(&home));
+    // Extra homes can be listed (path-separated) for other launchers that
+    // redirect CODEX_HOME the way Orca does.
+    if let Some(extra) = std::env::var_os("TOKCAT_CODEX_HOMES") {
+        codex_homes.extend(std::env::split_paths(&extra));
+    }
+
+    let mut roots = Vec::new();
+    for codex_home in codex_homes {
+        roots.push(codex_home.join("sessions"));
+        roots.push(codex_home.join("archived_sessions"));
+    }
     // Keep reading this legacy env var so users with existing headless exports
     // do not lose Codex history after removing the runtime CLI dependency.
     if let Ok(headless) = std::env::var("TOKSCALE_HEADLESS_DIR") {
         roots.push(PathBuf::from(headless).join("codex"));
     }
+
+    // A launcher-provided CODEX_HOME may already point at an Orca home, so drop
+    // duplicate roots; parse_codex_file is also deduped downstream by content.
+    let mut seen = HashSet::new();
     for root in roots {
+        if !seen.insert(root.clone()) {
+            continue;
+        }
         for file in collect_files(&root, |p| {
             p.extension().and_then(|s| s.to_str()) == Some("jsonl")
         }) {
@@ -2224,6 +2244,42 @@ fn xdg_data_home(home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.join(".local").join("share"))
 }
 
+/// Codex homes that Orca manages under its own data dir. Orca stores each
+/// runtime home as a subdirectory of `orca/codex-runtime-home/` (today just
+/// `home`), so scan every immediate child that actually holds a `sessions`
+/// folder rather than hardcoding the single known name.
+fn orca_codex_homes(home: &Path) -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    let mut data_dirs = vec![
+        // macOS
+        home.join("Library")
+            .join("Application Support")
+            .join("orca"),
+        // Linux (XDG)
+        xdg_data_home(home).join("orca"),
+    ];
+    // Windows / explicit override
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        data_dirs.push(PathBuf::from(appdata).join("orca"));
+    }
+
+    for data_dir in data_dirs {
+        let runtime_root = data_dir.join("codex-runtime-home");
+        let Ok(entries) = fs::read_dir(&runtime_root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let candidate = entry.path();
+            if candidate.join("sessions").is_dir()
+                || candidate.join("archived_sessions").is_dir()
+            {
+                homes.push(candidate);
+            }
+        }
+    }
+    homes
+}
+
 fn hermes_db_path() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("HERMES_HOME") {
         let p = PathBuf::from(home).join("state.db");
@@ -2782,6 +2838,31 @@ fn bundled_price(model: &str, provider: &str) -> Price {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_orca_managed_codex_homes() {
+        // Simulate `~/Library/Application Support/orca/codex-runtime-home/<name>`
+        // with a `sessions` dir, which is where Orca redirects CODEX_HOME.
+        let home = std::env::temp_dir().join(format!(
+            "tokcat-orca-home-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let runtime_root = home
+            .join("Library")
+            .join("Application Support")
+            .join("orca")
+            .join("codex-runtime-home");
+        let managed_home = runtime_root.join("home");
+        fs::create_dir_all(managed_home.join("sessions")).unwrap();
+        // A sibling dir without any sessions folder must be ignored.
+        fs::create_dir_all(runtime_root.join("scratch")).unwrap();
+
+        let homes = orca_codex_homes(&home);
+        assert_eq!(homes, vec![managed_home]);
+
+        let _ = fs::remove_dir_all(home);
+    }
 
     fn assert_price(model: &str, provider: &str, expected: Price) {
         let actual = bundled_price(model, provider);
