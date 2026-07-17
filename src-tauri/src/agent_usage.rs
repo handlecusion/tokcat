@@ -15,8 +15,6 @@ const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const CLAUDE_DEFAULT_SCOPES: &str =
-    "user:profile user:inference user:sessions:claude_code user:mcp_servers";
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
 // Grok Build OAuth / billing — same endpoints as tokscale's usage/grok module.
@@ -818,7 +816,6 @@ async fn refresh_claude_credentials(
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": CLAUDE_CLIENT_ID,
-        "scope": claude_refresh_scope(&credentials.scopes),
     });
     let response = client
         .post(CLAUDE_REFRESH_URL)
@@ -848,14 +845,6 @@ async fn refresh_claude_credentials(
         rate_limit_tier: credentials.rate_limit_tier.clone(),
         subscription_type: credentials.subscription_type.clone(),
     })
-}
-
-fn claude_refresh_scope(scopes: &[String]) -> String {
-    if scopes.is_empty() {
-        CLAUDE_DEFAULT_SCOPES.to_string()
-    } else {
-        scopes.join(" ")
-    }
 }
 
 fn save_codex_credentials(credentials: &CodexCredentials) -> Result<(), String> {
@@ -2165,20 +2154,6 @@ mod tests {
         assert_eq!(credentials.refresh_token.as_deref(), Some("refresh"));
         assert_eq!(credentials.scopes, vec!["user:profile"]);
         assert_eq!(credentials.subscription_type.as_deref(), Some("pro"));
-    }
-
-    #[test]
-    fn builds_claude_refresh_scope_from_credentials() {
-        let scopes = vec![
-            "user:profile".to_string(),
-            "user:inference".to_string(),
-            "user:sessions:claude_code".to_string(),
-        ];
-        assert_eq!(
-            claude_refresh_scope(&scopes),
-            "user:profile user:inference user:sessions:claude_code"
-        );
-        assert_eq!(claude_refresh_scope(&[]), CLAUDE_DEFAULT_SCOPES);
     }
 
     #[test]
