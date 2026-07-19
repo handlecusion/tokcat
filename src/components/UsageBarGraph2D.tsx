@@ -239,20 +239,33 @@ export function UsageBarGraph2D({
                   <rect x={x} y={height - bottom - 2} width={barWidth} height={2} rx={1} className="bar2d-empty" />
                 )}
                 {(bar.totalTokens > 0 || bar.totalCost > 0) && (
-                  <rect
-                    className="bar2d-hit"
-                    x={x}
-                    y={top}
-                    width={barWidth}
-                    height={chartHeight}
-                    tabIndex={0}
-                    role="img"
-                    aria-label={`${formatMonthDay(bar.date)}, ${exactTokens(bar.totalTokens)} tokens, ${formatCost(bar.totalCost)}`}
-                    onMouseEnter={() => showTooltip(bar, index)}
-                    onMouseMove={() => showTooltip(bar, index)}
-                    onFocus={() => showTooltip(bar, index)}
-                    onBlur={() => setHover(null)}
-                  />
+                  <>
+                    <rect
+                      className="bar2d-hit"
+                      x={x}
+                      y={top}
+                      width={barWidth}
+                      height={chartHeight}
+                      tabIndex={0}
+                      role="img"
+                      aria-label={`${formatMonthDay(bar.date)}, ${exactTokens(bar.totalTokens)} tokens, ${formatCost(bar.totalCost)}`}
+                      onMouseEnter={() => showTooltip(bar, index)}
+                      onMouseMove={() => showTooltip(bar, index)}
+                      onFocus={() => showTooltip(bar, index)}
+                      onBlur={() => setHover(null)}
+                      // WebKit focuses tabindex elements on click, leaving the keyboard
+                      // focus ring stuck on the bar after mouse interaction.
+                      onMouseDown={event => event.preventDefault()}
+                    />
+                    <rect
+                      className="bar2d-focus"
+                      x={x}
+                      y={height - bottom - Math.max(totalHeight, 4)}
+                      width={barWidth}
+                      height={Math.max(totalHeight, 4)}
+                      rx={2}
+                    />
+                  </>
                 )}
               </g>
             )

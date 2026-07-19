@@ -749,7 +749,12 @@ html, body, #root {
   pointer-events: all;
   outline: none;
 }
-.bar2d-hit:focus-visible {
+.bar2d-focus {
+  fill: none;
+  stroke: none;
+  pointer-events: none;
+}
+.bar2d-hit:focus-visible + .bar2d-focus {
   stroke: var(--blue);
   stroke-width: 1.5;
 }
