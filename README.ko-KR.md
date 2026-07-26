@@ -113,7 +113,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 |------|------|
 | **2D / 3D 사용량 보기** | 최근 30일 누적 토큰 차트 또는 full-year 3D 타일 그래프. orbit 컨트롤, 카메라 상태 저장, active 타일 자동 fit. |
 | **Overview + 클라이언트 탭** | 데이터가 있는 Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build 탭으로 전환. |
-| **Agent limits** | 로컬 OAuth credential이 있으면 Codex/Claude/Grok session, weekly, credits, model, reset, remaining limit window 표시. |
+| **Agent limits** | 로컬 credential이 있으면 Codex/Claude/Grok/Cursor의 session, weekly, monthly, credits, model, reset, remaining limit window 표시. Cursor는 청구 주기 사용량을 퍼센트로, Auto/API 모델 풀로 나눠 보여줍니다. |
 | **라이브 메뉴바 타이틀** | 오늘의 토큰 / 오늘의 비용 / 전체 토큰 / 전체 비용 / 아이콘만. 토큰 처리량 업데이트는 3분마다 전달됩니다. |
 | **트레이 아이콘 애니메이션** | 회전하는 고양이 또는 party parrot 애니메이션 속도가 실시간 토큰 처리량에 따라 변동. |
 | **네이티브 비브런시 + 글래스모피즘** | 투명 윈도우 + macOS `sidebar` 머티리얼; 라이트/다크 자동 전환. |
@@ -123,7 +123,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 | **인앱 자동 업데이트** | 서명된 Tauri 업데이터. 시작 시 + 30분마다 silent 체크. Settings/트레이 메뉴에서 수동 체크 가능. |
 | **로그인 시 자동 실행** | Tauri autostart 플러그인 — Settings에서 활성화. |
 | **스트릭 & 요약** | 최장/현재 스트릭, 누적 토큰, 누적 비용, 일평균, 최고 사용일. |
-| **텔레메트리 없음** | 사용량 히스토리는 로컬에 머무릅니다. 네트워크 요청은 서명된 업데이트 확인과 credential이 있을 때의 Codex/Claude/Grok quota 조회로 제한됩니다. |
+| **텔레메트리 없음** | 사용량 히스토리는 로컬에 머무릅니다. 네트워크 요청은 서명된 업데이트 확인과 credential이 있을 때의 Codex/Claude/Grok/Cursor quota 조회로 제한됩니다. |
 
 ---
 
@@ -194,7 +194,7 @@ Tokcat은 MIT 라이선스 무료 오픈소스입니다. 구독, 유료 등급, 
 
 ### Tokcat은 제 데이터를 어디로 보내나요?
 
-Tokcat 서버로 사용량 히스토리를 보내지 않고, 텔레메트리·분석·클라우드 동기화·Tokcat 계정이 없습니다. 네트워크 요청은 새 릴리스 확인을 위한 `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json` 조회와, 로컬 credential이 있을 때 Codex/Claude/Grok quota를 직접 조회하는 요청으로 제한됩니다. 토큰 사용 히스토리는 디스크의 세션 로그에서 로컬로 읽습니다.
+Tokcat 서버로 사용량 히스토리를 보내지 않고, 텔레메트리·분석·클라우드 동기화·Tokcat 계정이 없습니다. 네트워크 요청은 새 릴리스 확인을 위한 `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json` 조회와, 로컬 credential이 있을 때 Codex/Claude/Grok/Cursor quota를 직접 조회하는 요청으로 제한됩니다. 토큰 사용 히스토리는 디스크의 세션 로그에서 로컬로 읽습니다.
 
 ### CLI 토큰 사용량 도구와 어떻게 다른가요?
 

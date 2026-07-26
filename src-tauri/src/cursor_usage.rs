@@ -89,10 +89,28 @@ fn state_db_path() -> Result<PathBuf, String> {
     Ok(home()?.join("Library/Application Support/Cursor/User/globalStorage/state.vscdb"))
 }
 
+/// Read one value out of Cursor's Electron key/value store, or None when Cursor
+/// isn't installed / the key is absent. Cursor stores JSON scalars, so plain
+/// strings arrive quoted — strip them the same way `read_access_token` does.
+pub(crate) fn read_state_value(key: &str) -> Option<String> {
+    let path = state_db_path().ok()?;
+    if !path.exists() {
+        return None;
+    }
+    let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let value: String = conn
+        .query_row("SELECT value FROM ItemTable WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .ok()?;
+    let value = value.trim().trim_matches('"').trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
 /// Read Cursor's live OAuth access token from its Electron key/value store.
 /// Cursor refreshes this token in place; the macOS Keychain copy is only written
 /// at login and goes stale, so the state DB is the reliable source.
-fn read_access_token() -> Result<String, String> {
+pub(crate) fn read_access_token() -> Result<String, String> {
     let path = state_db_path()?;
     if !path.exists() {
         return Err("Cursor not found. Install Cursor and sign in to enable usage.".to_string());

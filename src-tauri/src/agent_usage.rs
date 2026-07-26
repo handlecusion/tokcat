@@ -17,6 +17,12 @@ const CLAUDE_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
+// Cursor current-period usage. A Connect RPC (not one of the cookie-authed
+// cursor.com dashboard endpoints), so the session token from Cursor's state DB
+// goes straight in as a bearer token — no WorkOS cookie or CSRF headers.
+const CURSOR_USAGE_URL: &str =
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
+
 // Grok Build OAuth / billing — same endpoints as tokscale's usage/grok module.
 const GROK_SUBSCRIPTIONS_URL: &str = "https://grok.com/rest/subscriptions";
 const GROK_TASK_USAGE_URL: &str = "https://grok.com/rest/tasks/usage";
@@ -246,6 +252,39 @@ struct ClaudeRefreshResponse {
     expires_in: i64,
 }
 
+/// `GetCurrentPeriodUsage` response. Every field is optional: Cursor changes
+/// this payload with its billing model (request quotas → dollar-denominated
+/// included usage), and a missing field must degrade to "no window" rather than
+/// fail the whole snapshot.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorPeriodUsage {
+    #[serde(default)]
+    billing_cycle_end: Option<String>,
+    #[serde(default)]
+    plan_usage: Option<CursorPlanUsage>,
+}
+
+/// Money fields are minor units (cents); percentages are already 0-100.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorPlanUsage {
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    limit: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    used: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    remaining: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    total_percent_used: Option<f64>,
+    /// Cursor's own (auto-routed) model pool.
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    auto_percent_used: Option<f64>,
+    /// Third-party model pool billed at API rates.
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    api_percent_used: Option<f64>,
+}
+
 pub async fn run() -> AgentUsagePayload {
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
     let mut agents = Vec::new();
@@ -257,6 +296,9 @@ pub async fn run() -> AgentUsagePayload {
     }
     if grok_is_configured() {
         agents.push(fetch_grok().await);
+    }
+    if cursor_is_configured() {
+        agents.push(fetch_cursor().await);
     }
     AgentUsagePayload {
         generated_at,
@@ -293,6 +335,17 @@ fn claude_is_configured() -> bool {
 /// (default `~/.grok/auth.json`). Missing file hides the Grok limits tile.
 fn grok_is_configured() -> bool {
     grok_auth_path().is_file()
+}
+
+/// Whether Cursor is installed *and* signed in. Cursor keeps its session token
+/// in the Electron state DB, so an absent token means "not set up" and the tile
+/// stays hidden rather than showing a permanent sign-in error.
+///
+/// Note this is independent of the `cursorUsage` opt-in, which gates the
+/// historical event fetch feeding the contribution graph. Plan quota is read
+/// here on the same terms as every other agent's limits.
+fn cursor_is_configured() -> bool {
+    crate::cursor_usage::read_state_value("cursorAuth/accessToken").is_some()
 }
 
 async fn fetch_grok() -> AgentUsageSnapshot {
@@ -425,6 +478,83 @@ async fn fetch_claude() -> AgentUsageSnapshot {
             error: Some(error),
         },
     }
+}
+
+async fn fetch_cursor() -> AgentUsageSnapshot {
+    match fetch_cursor_inner().await {
+        Ok(snapshot) => snapshot,
+        Err(error) => AgentUsageSnapshot {
+            client_id: "cursor".to_string(),
+            source: "session".to_string(),
+            updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            identity: None,
+            windows: Vec::new(),
+            credits: None,
+            error: Some(error),
+        },
+    }
+}
+
+async fn fetch_cursor_inner() -> Result<AgentUsageSnapshot, String> {
+    let token = crate::cursor_usage::read_access_token()?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("build Cursor client: {}", e))?;
+
+    let response = client
+        .post(CURSOR_USAGE_URL)
+        .bearer_auth(&token)
+        // Connect RPC over plain JSON; without this header the server answers
+        // with a protobuf frame instead.
+        .header("Connect-Protocol-Version", "1")
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, "Tokcat")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("Cursor usage request failed: {}", e))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("read Cursor usage response: {}", e))?;
+
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err("Cursor session expired. Open Cursor and sign in again.".to_string());
+    }
+    if !status.is_success() {
+        return Err(format!("Cursor usage API returned {}.", status.as_u16()));
+    }
+
+    let usage: CursorPeriodUsage =
+        serde_json::from_str(&body).map_err(|e| format!("decode Cursor usage response: {}", e))?;
+    let now = Utc::now();
+    let windows = cursor_windows(
+        usage.plan_usage.as_ref(),
+        usage.billing_cycle_end.as_deref(),
+        now,
+    );
+    if windows.is_empty() {
+        return Err("Cursor usage API returned no plan windows.".to_string());
+    }
+
+    Ok(AgentUsageSnapshot {
+        client_id: "cursor".to_string(),
+        source: "session".to_string(),
+        updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+        // Both read locally: Cursor caches them in the same state DB the token
+        // comes from, so the plan label survives even when the API call fails.
+        identity: Some(AgentIdentity {
+            email: crate::cursor_usage::read_state_value("cursorAuth/cachedEmail"),
+            plan: crate::cursor_usage::read_state_value("cursorAuth/stripeMembershipType")
+                .map(clean_plan),
+        }),
+        windows,
+        credits: cursor_credits(usage.plan_usage.as_ref()),
+        error: None,
+    })
 }
 
 async fn fetch_codex_inner() -> Result<AgentUsageSnapshot, String> {
@@ -1060,6 +1190,87 @@ fn claude_credits(extra: Option<&ClaudeExtraUsage>) -> Option<CreditsSnapshot> {
         remaining,
         unlimited: false,
     })
+}
+
+/// Map the current billing period onto usage windows. "Monthly" is the headline
+/// number the Cursor dashboard shows as a percentage; "Auto" and "API" split it
+/// by model pool and only appear when Cursor reports them.
+fn cursor_windows(
+    plan: Option<&CursorPlanUsage>,
+    billing_cycle_end: Option<&str>,
+    now: DateTime<Utc>,
+) -> Vec<UsageWindow> {
+    let Some(plan) = plan else {
+        return Vec::new();
+    };
+    let resets_at = billing_cycle_end.and_then(parse_cursor_datetime);
+    let total = plan.total_percent_used.or_else(|| {
+        // Older payloads report only the dollar figures; derive the percentage
+        // from whichever pair is present.
+        let limit = plan.limit.filter(|limit| *limit > 0.0)?;
+        let used = plan
+            .used
+            .or_else(|| plan.remaining.map(|remaining| limit - remaining))?;
+        Some((used / limit) * 100.0)
+    });
+    [
+        ("Monthly", total),
+        ("Auto", plan.auto_percent_used),
+        ("API", plan.api_percent_used),
+    ]
+    .into_iter()
+    .filter_map(|(label, percent)| cursor_window(label, percent?, resets_at, now))
+    .collect()
+}
+
+fn cursor_window(
+    label: &str,
+    used_percent: f64,
+    resets_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<UsageWindow> {
+    if !used_percent.is_finite() {
+        return None;
+    }
+    let used = used_percent.clamp(0.0, 100.0);
+    Some(UsageWindow {
+        label: label.to_string(),
+        used_percent: used,
+        remaining_percent: (100.0 - used).max(0.0),
+        resets_at: resets_at.map(|date| date.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        reset_text: resets_at.map(|date| reset_text(date, now)),
+    })
+}
+
+/// Dollars left in the monthly included-usage allowance. Cursor reports money in
+/// cents; `CreditsSnapshot::remaining` is major units, matching Claude's.
+fn cursor_credits(plan: Option<&CursorPlanUsage>) -> Option<CreditsSnapshot> {
+    let plan = plan?;
+    // A missing or zero limit means "not reported", not "unlimited" — claiming
+    // unlimited on an Ultra plan we can't actually read would be worse than
+    // showing nothing.
+    let limit = plan.limit.filter(|limit| *limit > 0.0)?;
+    let remaining = plan
+        .remaining
+        .or_else(|| plan.used.map(|used| limit - used))
+        .filter(|remaining| remaining.is_finite())?;
+    Some(CreditsSnapshot {
+        remaining: Some((remaining / 100.0).max(0.0)),
+        unlimited: false,
+    })
+}
+
+/// `billingCycleEnd` shows up as both an RFC3339 timestamp and epoch millis
+/// (string-encoded, as Connect does with int64) — accept either.
+fn parse_cursor_datetime(value: &str) -> Option<DateTime<Utc>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(parsed) = parse_datetime(value) {
+        return Some(parsed);
+    }
+    Utc.timestamp_millis_opt(value.parse().ok()?).single()
 }
 
 fn format_currency_minor_units(value: f64, currency: Option<&str>) -> String {
@@ -2004,6 +2215,119 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cursor_now() -> DateTime<Utc> {
+        Utc.timestamp_millis_opt(1_781_000_000_000)
+            .single()
+            .unwrap()
+    }
+
+    #[test]
+    fn cursor_windows_use_server_percentages_and_split_pools() {
+        let plan = CursorPlanUsage {
+            limit: Some(2000.0),
+            used: Some(812.0),
+            remaining: Some(1188.0),
+            total_percent_used: Some(40.6),
+            auto_percent_used: Some(12.1),
+            api_percent_used: Some(28.5),
+        };
+        let windows = cursor_windows(Some(&plan), Some("2026-08-01T00:00:00Z"), cursor_now());
+        let labels: Vec<_> = windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["Monthly", "Auto", "API"]);
+        assert_eq!(windows[0].used_percent, 40.6);
+        assert!((windows[0].remaining_percent - 59.4).abs() < 1e-9);
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2026-08-01T00:00:00.000Z")
+        );
+        assert!(windows[0].reset_text.is_some());
+    }
+
+    #[test]
+    fn cursor_monthly_percent_falls_back_to_dollar_figures() {
+        // Older payloads carry only the money fields. `remaining` alone is
+        // enough: used = limit - remaining.
+        let plan = CursorPlanUsage {
+            limit: Some(2000.0),
+            remaining: Some(1500.0),
+            ..Default::default()
+        };
+        let windows = cursor_windows(Some(&plan), None, cursor_now());
+        assert_eq!(windows.len(), 1, "no pool split without the percent fields");
+        assert_eq!(windows[0].label, "Monthly");
+        assert_eq!(windows[0].used_percent, 25.0);
+        assert!(windows[0].resets_at.is_none());
+    }
+
+    #[test]
+    fn cursor_windows_empty_without_usable_fields() {
+        // An Ultra/unlimited or unrecognized payload must yield no windows so
+        // the caller surfaces "no plan windows" instead of a bogus 0%.
+        assert!(cursor_windows(Some(&CursorPlanUsage::default()), None, cursor_now()).is_empty());
+        assert!(cursor_windows(None, None, cursor_now()).is_empty());
+        let zero_limit = CursorPlanUsage {
+            limit: Some(0.0),
+            used: Some(0.0),
+            ..Default::default()
+        };
+        assert!(cursor_windows(Some(&zero_limit), None, cursor_now()).is_empty());
+    }
+
+    #[test]
+    fn cursor_credits_report_dollars_left_and_never_guess_unlimited() {
+        let plan = CursorPlanUsage {
+            limit: Some(2000.0),
+            used: Some(812.0),
+            ..Default::default()
+        };
+        let credits = cursor_credits(Some(&plan)).expect("credits from limit + used");
+        assert!((credits.remaining.unwrap() - 11.88).abs() < 1e-9);
+        assert!(!credits.unlimited);
+        // No limit reported => no credits row, rather than a false "unlimited".
+        assert!(cursor_credits(Some(&CursorPlanUsage::default())).is_none());
+    }
+
+    #[test]
+    fn cursor_billing_cycle_end_accepts_rfc3339_and_epoch_millis() {
+        let from_rfc = parse_cursor_datetime("2026-08-01T00:00:00Z").unwrap();
+        let from_millis = parse_cursor_datetime("1785542400000").unwrap();
+        assert_eq!(from_rfc.timestamp_millis(), 1785542400000);
+        assert_eq!(from_millis, from_rfc);
+        assert!(parse_cursor_datetime("  ").is_none());
+        assert!(parse_cursor_datetime("not-a-date").is_none());
+    }
+
+    #[test]
+    fn cursor_response_tolerates_string_encoded_numbers() {
+        // Connect encodes int64 as JSON strings; percentages may arrive either
+        // way. Both must decode rather than dropping the window.
+        let usage: CursorPeriodUsage = serde_json::from_str(
+            r#"{"billingCycleEnd":"1785542400000","planUsage":{"limit":"2000","used":"500","totalPercentUsed":"25"}}"#,
+        )
+        .expect("decode");
+        let windows = cursor_windows(
+            usage.plan_usage.as_ref(),
+            usage.billing_cycle_end.as_deref(),
+            cursor_now(),
+        );
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].used_percent, 25.0);
+        assert_eq!(
+            windows[0].resets_at.as_deref(),
+            Some("2026-08-01T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn cursor_unknown_fields_do_not_break_decoding() {
+        // Cursor adds fields as its billing model changes; unknown ones must be
+        // ignored, and a payload with no planUsage must still decode.
+        let usage: CursorPeriodUsage =
+            serde_json::from_str(r#"{"displayMessage":"hi","spendLimitUsage":{"limitType":"x"}}"#)
+                .expect("decode");
+        assert!(usage.plan_usage.is_none());
+    }
 
     #[test]
     fn codex_tile_gated_on_auth_json_presence() {
