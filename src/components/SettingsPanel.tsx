@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import {
   AnimationStyle,
   ANIMATION_STYLE_LABELS,
+  mostConstrained,
   PlanDisplayMode,
   PlanProvider,
   PLAN_PROVIDER_LABELS,
@@ -171,9 +172,13 @@ export function SettingsPanel({ open, onClose, settings, onChange, agentUsage }:
       return
     }
     // Pin a valid window for the chosen provider: keep the current one if it
-    // still exists, else default to the provider's first window.
+    // still exists, else default to the one closest to its cap. Defaulting to
+    // the first window can land on the emptiest pool — picking Cursor would
+    // show its untouched Cursor Models row rather than the one running out.
     const wins = windowsFor(provider)
-    const planWindow = wins.includes(settings.planWindow) ? settings.planWindow : wins[0] ?? settings.planWindow
+    const windows = planSnapshots.get(provider)?.windows ?? []
+    const fallback = windows.length ? mostConstrained(windows).label : settings.planWindow
+    const planWindow = wins.includes(settings.planWindow) ? settings.planWindow : fallback
     onChange({ ...settings, planProvider: provider, planWindow })
   }
 
