@@ -12,10 +12,11 @@ export type TrayMode =
   | 'hidden'
 export type AnimationStyle = 'cat' | 'parrot'
 
-// Providers that expose an OAuth plan/quota cap, so a "% used / % left" is
-// meaningful. Log-parsed clients (cursor, gemini, copilot, …) only report
-// cumulative tokens and are intentionally excluded here.
-export type PlanProvider = 'auto' | 'claude' | 'codex' | 'grok'
+// Providers that expose a plan/quota cap, so a "% used / % left" is meaningful.
+// Cursor qualifies via its billing-period API (dollar-denominated monthly
+// allowance), not via logs. Purely log-parsed clients (gemini, copilot, …) only
+// report cumulative tokens and are intentionally excluded here.
+export type PlanProvider = 'auto' | 'claude' | 'codex' | 'grok' | 'cursor'
 export type PlanDisplayMode = 'used' | 'left'
 
 // Short labels shown in the (text-only) menubar title. The status item can't
@@ -24,8 +25,9 @@ export const PLAN_PROVIDER_LABELS: Record<Exclude<PlanProvider, 'auto'>, string>
   claude: 'Claude',
   codex: 'Codex',
   grok: 'Grok',
+  cursor: 'Cursor',
 }
-export const PLAN_CAPABLE_PROVIDERS = ['claude', 'codex', 'grok'] as const
+export const PLAN_CAPABLE_PROVIDERS = ['claude', 'codex', 'grok', 'cursor'] as const
 
 export interface Settings {
   trayMode: TrayMode

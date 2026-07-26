@@ -57,6 +57,7 @@ const PLAN_PROVIDER_OPTIONS: { id: PlanProvider; label: string }[] = [
   { id: 'claude', label: PLAN_PROVIDER_LABELS.claude },
   { id: 'codex', label: PLAN_PROVIDER_LABELS.codex },
   { id: 'grok', label: PLAN_PROVIDER_LABELS.grok },
+  { id: 'cursor', label: PLAN_PROVIDER_LABELS.cursor },
 ]
 
 const PLAN_DISPLAY_OPTIONS: { id: PlanDisplayMode; label: string }[] = [

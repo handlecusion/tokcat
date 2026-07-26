@@ -84,7 +84,7 @@ Tokcat reads local usage logs directly from the Rust backend. On demand from the
 
 For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. The same signal can drive the menu-bar title, the Live session card, and the adaptive tray animation.
 
-For agent-limit cards, Tokcat reads existing Codex, Claude, and Grok Build OAuth credentials and asks those vendors' usage endpoints for quota windows. Those direct vendor calls are separate from the local usage history and are not telemetry.
+For agent-limit cards, Tokcat reads existing Codex, Claude, and Grok Build OAuth credentials plus Cursor's local session token, and asks those vendors' usage endpoints for quota windows. Those direct vendor calls are separate from the local usage history and are not telemetry.
 
 The React frontend renders the payload as an Overview dashboard with per-client tabs. Each tab shares the same year selector, theme picker, 2D/3D usage card, limit card, live session rows, and streak summaries.
 
@@ -130,7 +130,7 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 |---------|---------|
 | **2D / 3D usage views** | Recent 30-day stacked token bars or interactive full-year 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
 | **Overview + client tabs** | Switch between all-client totals and dedicated tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build when data is present. |
-| **Agent limits** | Codex, Claude, and Grok Build OAuth quota cards show session, weekly, credits, model, reset, and remaining-limit windows when local credentials are available. |
+| **Agent limits** | Codex, Claude, Grok Build, and Cursor quota cards show session, weekly, monthly, credits, model, reset, and remaining-limit windows when local credentials are available. Cursor reports its billing-period allowance as a percentage, split into Auto and API model pools. |
 | **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. Token-rate updates are emitted every 3 minutes. |
 | **Animated tray icon** | Optional spinning cat or party parrot animation whose FPS scales with your real-time token velocity. Native CALayer frame swaps keep the animation smooth in the macOS menu bar. |
 | **Native vibrancy + glassmorphism** | Transparent window with macOS `sidebar` `NSVisualEffectView`; light/dark auto via `prefers-color-scheme`. |
@@ -187,7 +187,9 @@ Tokcat only reads local usage logs that already exist on disk. Open the AI clien
 
 **Agent limits show Error or No quota**
 
-Limit cards use local OAuth credentials from Codex, Claude, and Grok Build. Run `codex login`, `claude`, or `grok login` to refresh those credentials, then choose Refresh Now. API-key-only Codex auth can still produce local token history, but OAuth usage limits require OAuth login.
+Limit cards use local OAuth credentials from Codex, Claude, and Grok Build. Run `codex login`, `claude`, or `grok login` to refresh those credentials, then choose Refresh Now. API-key-only Codex auth can still produce local token history, but OAuth usage limits require OAuth login. Cursor's card reads the session token Cursor stores locally — if it says the session expired, open Cursor and sign in again.
+
+Cursor's limit card is separate from Settings → Cursor usage. That toggle backfills the contribution graph with per-event history from cursor.com; the plan percentage needs no toggle.
 
 **The menu-bar window vanishes when I click anywhere**
 
@@ -236,7 +238,7 @@ Tokcat tracks **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemi
 
 ### Does Tokcat send my data anywhere?
 
-Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It does make network requests for two explicit product functions: update checks against `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json`, and direct Codex/Claude/Grok OAuth quota lookups against those vendors when local credentials are available. Token-usage history is read locally from session logs.
+Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It does make network requests for two explicit product functions: update checks against `https://github.com/handlecusion/tokcat/releases/latest/download/latest.json`, and direct Codex/Claude/Grok/Cursor quota lookups against those vendors when local credentials are available. Token-usage history is read locally from session logs.
 
 ### How is Tokcat different from CLI token-usage tools?
 
