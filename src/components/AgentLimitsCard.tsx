@@ -25,8 +25,9 @@ const LIMIT_ROWS: Record<string, LimitRow[]> = {
   // Placeholder rows while OAuth quota is loading; real windows come from
   // the backend (Monthly credits, Frequent/Occasional task limits, …).
   grok: [{ label: 'Monthly' }],
-  // Cursor's billing period; the backend adds Auto/API pool rows when present.
-  cursor: [{ label: 'Monthly' }],
+  // Cursor's two billing-period pools; accounts that don't report the split
+  // get a single Monthly row from the backend instead.
+  cursor: [{ label: 'Cursor Models' }, { label: 'Other Models' }],
 }
 
 function normalizeTraceClient(id: string): string {

@@ -1,5 +1,5 @@
 import type { Stats } from './types'
-import type { AgentUsagePayload } from './agentUsage'
+import type { AgentUsagePayload, UsageWindow } from './agentUsage'
 import { humanizeTokens, formatCost, isoDate } from './format'
 
 export type TrayMode =
@@ -117,11 +117,19 @@ function clampPercent(value: number): number {
   return Math.round(Math.min(100, Math.max(0, value)))
 }
 
+// The window closest to its cap. Used both for 'auto' mode and as the fallback
+// when a pinned label is gone: providers add and drop windows over time (Cursor
+// moved to per-pool rows, Claude's model windows come and go), and the first
+// window is an arbitrary pick that can easily be the emptiest one.
+export function mostConstrained(windows: UsageWindow[]): UsageWindow {
+  return windows.reduce((worst, w) => (w.usedPercent > worst.usedPercent ? w : worst))
+}
+
 // Resolve which provider/window the menubar should show. In 'auto' mode we pick
 // the window closest to its cap (highest usedPercent) across all plan-capable
 // providers; otherwise we honor the pinned provider + window, falling back to
-// that provider's first window if the pinned label is gone. Returns null when
-// no plan-capable provider has any windows yet (loading / not signed in).
+// that provider's most-constrained window if the pinned label is gone. Returns
+// null when no plan-capable provider has any windows yet (loading / signed out).
 function pickPlanWindow(
   agentUsage: AgentUsagePayload | null,
   provider: PlanProvider,
@@ -146,7 +154,7 @@ function pickPlanWindow(
 
   const agent = candidates.find(a => a.clientId === provider)
   if (!agent) return null
-  const w = agent.windows.find(x => x.label === windowLabel) ?? agent.windows[0]
+  const w = agent.windows.find(x => x.label === windowLabel) ?? mostConstrained(agent.windows)
   return { providerId: agent.clientId, usedPercent: w.usedPercent, remainingPercent: w.remainingPercent }
 }
 

@@ -130,7 +130,7 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 |---------|---------|
 | **2D / 3D usage views** | Recent 30-day stacked token bars or interactive full-year 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
 | **Overview + client tabs** | Switch between all-client totals and dedicated tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build when data is present. |
-| **Agent limits** | Codex, Claude, Grok Build, and Cursor quota cards show session, weekly, monthly, credits, model, reset, and remaining-limit windows when local credentials are available. Cursor reports its billing-period allowance as a percentage, split into Auto and API model pools. |
+| **Agent limits** | Codex, Claude, Grok Build, and Cursor quota cards show session, weekly, monthly, credits, model, reset, and remaining-limit windows when local credentials are available. Cursor shows one row per billing-period model pool (Cursor Models, Other Models), matching its own Plan & Usage page. |
 | **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, live tokens/min, or icon-only. Token-rate updates are emitted every 3 minutes. |
 | **Animated tray icon** | Optional spinning cat or party parrot animation whose FPS scales with your real-time token velocity. Native CALayer frame swaps keep the animation smooth in the macOS menu bar. |
 | **Native vibrancy + glassmorphism** | Transparent window with macOS `sidebar` `NSVisualEffectView`; light/dark auto via `prefers-color-scheme`. |

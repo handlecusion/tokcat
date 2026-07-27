@@ -485,7 +485,7 @@ async fn fetch_cursor() -> AgentUsageSnapshot {
         Ok(snapshot) => snapshot,
         Err(error) => AgentUsageSnapshot {
             client_id: "cursor".to_string(),
-            source: "session".to_string(),
+            source: "oauth".to_string(),
             updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             identity: None,
             windows: Vec::new(),
@@ -542,7 +542,10 @@ async fn fetch_cursor_inner() -> Result<AgentUsageSnapshot, String> {
 
     Ok(AgentUsageSnapshot {
         client_id: "cursor".to_string(),
-        source: "session".to_string(),
+        // Cursor's session token is an OAuth access token issued by
+        // authentication.cursor.sh; the tile renders this verbatim as its
+        // badge, and "SESSION" there reads like a session-length quota.
+        source: "oauth".to_string(),
         updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
         // Both read locally: Cursor caches them in the same state DB the token
         // comes from, so the plan label survives even when the API call fails.
@@ -1192,9 +1195,15 @@ fn claude_credits(extra: Option<&ClaudeExtraUsage>) -> Option<CreditsSnapshot> {
     })
 }
 
-/// Map the current billing period onto usage windows. "Monthly" is the headline
-/// number the Cursor dashboard shows as a percentage; "Auto" and "API" split it
-/// by model pool and only appear when Cursor reports them.
+/// Map the current billing period onto usage windows, mirroring what Cursor's
+/// own Plan & Usage page shows: one bar per model pool, and no combined bar.
+///
+/// `totalPercentUsed` blends the pools by dollars, so on a plan whose pools
+/// differ wildly in size (Ultra bundles a far larger Cursor-models allowance
+/// than its API allowance) it reads far below the pool that's actually running
+/// out — 3% while the binding pool sits at 14%. That's the opposite of useful
+/// for spend control, so it's a fallback for accounts that don't report the
+/// split, never the headline.
 fn cursor_windows(
     plan: Option<&CursorPlanUsage>,
     billing_cycle_end: Option<&str>,
@@ -1204,6 +1213,19 @@ fn cursor_windows(
         return Vec::new();
     };
     let resets_at = billing_cycle_end.and_then(parse_cursor_datetime);
+    // Labels match Cursor's own vocabulary so the rows can be read straight
+    // against its dashboard.
+    let pools: Vec<UsageWindow> = [
+        ("Cursor Models", plan.auto_percent_used),
+        ("Other Models", plan.api_percent_used),
+    ]
+    .into_iter()
+    .filter_map(|(label, percent)| cursor_window(label, percent?, resets_at, now))
+    .collect();
+    if !pools.is_empty() {
+        return pools;
+    }
+
     let total = plan.total_percent_used.or_else(|| {
         // Older payloads report only the dollar figures; derive the percentage
         // from whichever pair is present.
@@ -1213,14 +1235,10 @@ fn cursor_windows(
             .or_else(|| plan.remaining.map(|remaining| limit - remaining))?;
         Some((used / limit) * 100.0)
     });
-    [
-        ("Monthly", total),
-        ("Auto", plan.auto_percent_used),
-        ("API", plan.api_percent_used),
-    ]
-    .into_iter()
-    .filter_map(|(label, percent)| cursor_window(label, percent?, resets_at, now))
-    .collect()
+    total
+        .and_then(|total| cursor_window("Monthly", total, resets_at, now))
+        .into_iter()
+        .collect()
 }
 
 fn cursor_window(
@@ -2223,25 +2241,53 @@ mod tests {
     }
 
     #[test]
-    fn cursor_windows_use_server_percentages_and_split_pools() {
+    fn cursor_windows_report_pools_and_drop_the_blended_total() {
+        // Numbers from the Ultra account in #22: the dashboard showed 0% and
+        // 14% for the two pools while totalPercentUsed read 3%. Surfacing that
+        // 3% hides the pool actually running out, so the pools win outright.
         let plan = CursorPlanUsage {
-            limit: Some(2000.0),
-            used: Some(812.0),
-            remaining: Some(1188.0),
-            total_percent_used: Some(40.6),
-            auto_percent_used: Some(12.1),
-            api_percent_used: Some(28.5),
+            limit: Some(186_700.0),
+            used: Some(5600.0),
+            remaining: Some(181_100.0),
+            total_percent_used: Some(3.0),
+            auto_percent_used: Some(0.0),
+            api_percent_used: Some(14.0),
         };
-        let windows = cursor_windows(Some(&plan), Some("2026-08-01T00:00:00Z"), cursor_now());
+        let windows = cursor_windows(Some(&plan), Some("2026-08-22T00:00:00Z"), cursor_now());
         let labels: Vec<_> = windows.iter().map(|w| w.label.as_str()).collect();
-        assert_eq!(labels, ["Monthly", "Auto", "API"]);
-        assert_eq!(windows[0].used_percent, 40.6);
-        assert!((windows[0].remaining_percent - 59.4).abs() < 1e-9);
+        assert_eq!(labels, ["Cursor Models", "Other Models"]);
+        assert_eq!(windows[0].used_percent, 0.0);
+        assert_eq!(windows[1].used_percent, 14.0);
+        assert!((windows[1].remaining_percent - 86.0).abs() < 1e-9);
         assert_eq!(
-            windows[0].resets_at.as_deref(),
-            Some("2026-08-01T00:00:00.000Z")
+            windows[1].resets_at.as_deref(),
+            Some("2026-08-22T00:00:00.000Z")
         );
-        assert!(windows[0].reset_text.is_some());
+        assert!(windows[1].reset_text.is_some());
+    }
+
+    #[test]
+    fn cursor_reports_a_single_pool_when_only_one_is_present() {
+        let plan = CursorPlanUsage {
+            api_percent_used: Some(14.0),
+            total_percent_used: Some(3.0),
+            ..Default::default()
+        };
+        let windows = cursor_windows(Some(&plan), None, cursor_now());
+        let labels: Vec<_> = windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["Other Models"]);
+    }
+
+    #[test]
+    fn cursor_falls_back_to_the_blended_total_without_a_pool_split() {
+        let plan = CursorPlanUsage {
+            total_percent_used: Some(41.0),
+            ..Default::default()
+        };
+        let windows = cursor_windows(Some(&plan), None, cursor_now());
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].label, "Monthly");
+        assert_eq!(windows[0].used_percent, 41.0);
     }
 
     #[test]
