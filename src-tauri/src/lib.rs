@@ -253,6 +253,14 @@ fn spawn_refresh_loop(app: tauri::AppHandle, state: Arc<AppState>) {
             if state.is_cursor_usage_enabled() {
                 let _ = cursor_usage::refresh_cache().await;
             }
+            // Agent quota tiles ride the same cycle. This has to be driven
+            // from here rather than from a webview setInterval: the main
+            // window is hidden for most of a menubar session and macOS
+            // suspends JS timers in a hidden WKWebView, so a frontend timer
+            // only fires when some other event happens to wake it. Emitting
+            // does the waking itself. The first tick lands one REFRESH_SECS
+            // after startup, so it never races the frontend's mount fetch.
+            let _ = app.emit("agent-usage-update", &agent_usage::run().await);
             let years = state.known_years();
             for year in years {
                 let s = state.clone();

@@ -30,9 +30,22 @@ export function useAgentUsage(refreshKey: number): State {
       }
     }
 
+    // The 30-minute cadence lives in spawn_refresh_loop, not in a webview
+    // timer: the main window is hidden for most of a menubar session and
+    // macOS suspends JS timers there, so a setInterval only fires when some
+    // other event happens to wake the webview. A push wakes it on its own.
+    // See #44.
+    let unlisten: (() => void) | null = null
     ;(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core')
+        const { listen } = await import('@tauri-apps/api/event')
+        // Listen before the initial fetch, mirroring useGraphStream, so a
+        // push that lands mid-invoke isn't dropped.
+        unlisten = await listen<AgentUsagePayload>('agent-usage-update', e => {
+          if (disposed || !e.payload) return
+          setState({ payload: e.payload, error: null })
+        })
         const payload = await invoke<AgentUsagePayload>('get_agent_usage')
         if (!disposed) setState({ payload, error: null })
       } catch (err) {
@@ -43,6 +56,7 @@ export function useAgentUsage(refreshKey: number): State {
     })()
     return () => {
       disposed = true
+      if (unlisten) unlisten()
     }
   }, [refreshKey])
 

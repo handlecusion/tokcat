@@ -20,9 +20,6 @@ import { getClientStyle } from './lib/clients'
 
 const THEME_KEY = 'tokcat:theme:v1'
 const USAGE_VIEW_KEY = 'tokcat:usageview:v1'
-// Mirrors REFRESH_SECS in src-tauri/src/lib.rs so quota tiles and the graph
-// payload age at the same rate.
-const AGENT_USAGE_REFRESH_MS = 30 * 60 * 1000
 
 function loadTheme(): ThemeName {
   try {
@@ -47,12 +44,11 @@ function defaultYear(): string {
 export default function App() {
   const [year, setYear] = useState<string>(defaultYear())
   const [refreshTick, setRefreshTick] = useState(0)
-  // Bumped by the background timer below, and summed into the agent-usage key
-  // rather than folded into `refreshTick` so an automatic re-fetch doesn't spin
-  // the header icon or duplicate the graph rebuild the backend already runs.
-  const [agentUsageTick, setAgentUsageTick] = useState(0)
   const { payload, error } = useGraphStream(year)
-  const agentUsage = useAgentUsage(refreshTick + agentUsageTick)
+  // Periodic refresh arrives as an `agent-usage-update` event from
+  // spawn_refresh_loop; this key only drives the mount fetch and manual
+  // refresh. See #44 for why the cadence can't live in a webview timer.
+  const agentUsage = useAgentUsage(refreshTick)
   const [theme, setTheme] = useState<ThemeName>(() => loadTheme())
   const [isDark, setIsDark] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.matchMedia
@@ -160,17 +156,6 @@ export default function App() {
     const id = window.setInterval(() => {
       void checkForUpdatesSilent()
     }, 30 * 60 * 1000)
-    return () => window.clearInterval(id)
-  }, [])
-
-  // Agent limits are fetched on mount and on manual refresh only. The backend
-  // refresh loop rebuilds the contribution graph, not `get_agent_usage`, so
-  // without this tick the quota tiles — and a `plan_percent` menubar title —
-  // stay pinned to whatever the quotas were when Tokcat launched.
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setAgentUsageTick(t => t + 1)
-    }, AGENT_USAGE_REFRESH_MS)
     return () => window.clearInterval(id)
   }, [])
 
