@@ -113,7 +113,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 |------|------|
 | **2D / 3D 사용량 보기** | 최근 30일 누적 토큰 차트 또는 full-year 3D 타일 그래프. orbit 컨트롤, 카메라 상태 저장, active 타일 자동 fit. |
 | **Overview + 클라이언트 탭** | 데이터가 있는 Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build 탭으로 전환. |
-| **Agent limits** | 로컬 credential이 있으면 Codex/Claude/Grok/Cursor의 session, weekly, monthly, credits, model, reset, remaining limit window 표시. Cursor는 청구 주기의 모델 풀별(Cursor Models, Other Models)로 한 줄씩 보여주며, Cursor 자체 Plan & Usage 화면과 동일한 수치입니다. 한도 값은 실행 시, 이후 30분마다, 그리고 Refresh Now를 누를 때 다시 조회합니다. |
+| **Agent limits** | 로컬 credential이 있으면 Codex/Claude/Grok/Cursor의 session, weekly, monthly, credits, model, reset, remaining limit window 표시. Cursor는 청구 주기의 모델 풀별(Cursor Models, Other Models)로 한 줄씩 보여주며, Cursor 자체 Plan & Usage 화면과 동일한 수치입니다. 한도 값은 실행 시, 이후 30분마다, 팝오버를 열었을 때 값이 1분 이상 지났으면, 그리고 Refresh Now를 누를 때 다시 조회합니다. |
 | **라이브 메뉴바 타이틀** | 오늘의 토큰 / 오늘의 비용 / 전체 토큰 / 전체 비용 / 아이콘만. 토큰 처리량 업데이트는 3분마다 전달됩니다. |
 | **트레이 아이콘 애니메이션** | 회전하는 고양이 또는 party parrot 애니메이션 속도가 실시간 토큰 처리량에 따라 변동. |
 | **네이티브 비브런시 + 글래스모피즘** | 투명 윈도우 + macOS `sidebar` 머티리얼; 라이트/다크 자동 전환. |
