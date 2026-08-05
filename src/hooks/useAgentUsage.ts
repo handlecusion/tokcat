@@ -14,13 +14,22 @@ interface State {
 // payload can be many hours old with most of a cycle still left to run. Age is
 // measured against the payload's own `generatedAt`, which is wall-clock, so a
 // sleep is counted rather than skipped. See #44.
-const POPOVER_MAX_AGE_MS = 60 * 1000
+//
+// Five minutes rather than one: this only exists to cover the gap the backend
+// cadence can't, and a full refresh is four upstream calls plus three
+// subprocess spawns. At a minute, an active session re-fetches on essentially
+// every open and the 30-minute cadence stops meaning anything.
+const POPOVER_MAX_AGE_MS = 5 * 60 * 1000
 
 export function useAgentUsage(refreshKey: number): State {
   const [state, setState] = useState<State>({ payload: null, error: null })
   // Wall-clock timestamp of the newest payload, for the popover staleness
   // check below. 0 until the first one lands, which reads as "stale".
   const generatedAtRef = useRef(0)
+  // A full refresh can take a couple of minutes when an upstream is timing
+  // out, which is longer than the staleness window — without this, opening the
+  // popover a few times during one would start a fetch each time.
+  const inFlightRef = useRef(false)
 
   useEffect(() => {
     let disposed = false
@@ -57,7 +66,12 @@ export function useAgentUsage(refreshKey: number): State {
         const apply = (payload: AgentUsagePayload) => {
           if (disposed || !payload) return
           const generatedAt = Date.parse(payload.generatedAt)
-          generatedAtRef.current = Number.isNaN(generatedAt) ? 0 : generatedAt
+          const stamp = Number.isNaN(generatedAt) ? 0 : generatedAt
+          // A slow fetch can resolve after a newer push. Rendering the older
+          // one is merely wrong on screen; letting it walk `generatedAtRef`
+          // backwards also makes the next popover open re-fetch for nothing.
+          if (stamp && stamp < generatedAtRef.current) return
+          generatedAtRef.current = stamp
           setState({ payload, error: null })
         }
 
@@ -65,13 +79,30 @@ export function useAgentUsage(refreshKey: number): State {
         // push that lands mid-invoke isn't dropped.
         unlisten = await listen<AgentUsagePayload>('agent-usage-update', e => apply(e.payload))
         unlistenShown = await listen('popover-shown', () => {
-          if (disposed) return
+          if (disposed || inFlightRef.current) return
           if (Date.now() - generatedAtRef.current < POPOVER_MAX_AGE_MS) return
           // Deliberately not routed through `refreshTick`: this must not spin
           // the header icon or rebuild the graph, it's just a top-up.
-          void invoke<AgentUsagePayload>('get_agent_usage').then(apply, () => {})
+          inFlightRef.current = true
+          void invoke<AgentUsagePayload>('get_agent_usage')
+            .then(apply, err => {
+              // Keep whatever is on screen; the tiles carry per-agent errors
+              // of their own, so blanking them here would lose more than it
+              // explains.
+              if (!disposed) {
+                setState(s => ({ ...s, error: (err as Error).message ?? String(err) }))
+              }
+            })
+            .finally(() => {
+              inFlightRef.current = false
+            })
         })
-        apply(await invoke<AgentUsagePayload>('get_agent_usage'))
+        inFlightRef.current = true
+        try {
+          apply(await invoke<AgentUsagePayload>('get_agent_usage'))
+        } finally {
+          inFlightRef.current = false
+        }
       } catch (err) {
         if (!disposed) {
           setState(s => ({ ...s, error: (err as Error).message ?? String(err) }))

@@ -330,8 +330,13 @@ fn claude_is_configured() -> bool {
     if env_token.is_some() {
         return true;
     }
-    if matches!(load_claude_credentials_from_keychain(), Ok(Some(_))) {
-        return true;
+    match load_claude_credentials_from_keychain() {
+        Ok(Some(_)) => return true,
+        // A stalled Keychain read tells us nothing. Treat it as configured so
+        // the tile stays and surfaces the error, rather than vanishing as if
+        // Claude had never been set up.
+        Err(_) => return true,
+        Ok(None) => {}
     }
     claude_credentials_path().exists()
 }
@@ -865,19 +870,29 @@ fn parse_claude_credentials_data(raw: &str) -> Result<ClaudeCredentials, String>
 /// the usual trigger), and a wedged `claude` shim never returns. Unbounded,
 /// that hangs a thread every cycle for the rest of the session.
 ///
-/// `Err` is a spawn failure. `Ok(None)` covers a non-zero exit and a timeout
-/// alike — both mean "no usable output", which is what the callers act on.
-fn output_with_timeout(command: &mut Command, timeout: Duration) -> Result<Option<Vec<u8>>, String> {
+/// `Err` is a spawn failure. Otherwise the three outcomes stay distinct:
+/// `Failed` means the binary ran and answered no, `TimedOut` means we learned
+/// nothing. Callers must not collapse those two — for `security`, "no such
+/// keychain item" and "the read stalled" lead to opposite conclusions about
+/// whether Claude is set up at all.
+fn output_with_timeout(command: &mut Command, timeout: Duration) -> Result<CommandOutput, String> {
+    let deadline = Instant::now() + timeout;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
-    let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Ok(None);
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "child stdout was not captured".to_string());
+    let mut stdout = match stdout {
+        Ok(stdout) => stdout,
+        Err(e) => {
+            kill_and_reap(&mut child);
+            return Err(e);
+        }
     };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -885,19 +900,58 @@ fn output_with_timeout(command: &mut Command, timeout: Duration) -> Result<Optio
         let _ = stdout.read_to_end(&mut buf);
         let _ = tx.send(buf);
     });
-    match rx.recv_timeout(timeout) {
-        // The pipe closed, so the child is done or nearly so; wait() collects
-        // it rather than leaving a zombie.
-        Ok(buf) => match child.wait() {
-            Ok(status) if status.success() => Ok(Some(buf)),
-            _ => Ok(None),
-        },
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Ok(None)
+    let Ok(buf) = rx.recv_timeout(timeout) else {
+        kill_and_reap(&mut child);
+        return Ok(CommandOutput::TimedOut);
+    };
+    // A closed pipe doesn't mean the child is gone — it can close stdout and
+    // keep running, so the reap gets the same deadline the read did. An
+    // unbounded wait() here would park this thread for the child's lifetime
+    // and hand back a success as if nothing were wrong.
+    match wait_until(&mut child, deadline) {
+        Some(status) if status.success() => Ok(CommandOutput::Ok(buf)),
+        Some(_) => Ok(CommandOutput::Failed),
+        None => {
+            kill_and_reap(&mut child);
+            Ok(CommandOutput::TimedOut)
         }
     }
+}
+
+/// Outcome of [`output_with_timeout`], kept three-way on purpose.
+enum CommandOutput {
+    /// Exited zero; stdout captured.
+    Ok(Vec<u8>),
+    /// Ran to completion and exited non-zero.
+    Failed,
+    /// Hit the deadline and was killed. Says nothing about the answer.
+    TimedOut,
+}
+
+/// Poll for exit until `deadline`. `None` means still running (or unwaitable).
+fn wait_until(
+    child: &mut std::process::Child,
+    deadline: Instant,
+) -> Option<std::process::ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// SIGKILL then reap. The wait is bounded because the signal is uncatchable;
+/// note the reader thread can still outlive this if a grandchild inherited the
+/// pipe, since kill() signals the child alone.
+fn kill_and_reap(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(target_os = "macos")]
@@ -912,8 +966,19 @@ fn load_claude_credentials_from_keychain() -> Result<Option<String>, String> {
         SUBPROCESS_TIMEOUT,
     )
     .map_err(|e| format!("read Claude Keychain credentials: {}", e))?;
-    let Some(stdout) = stdout else {
-        return Ok(None);
+    let stdout = match stdout {
+        CommandOutput::Ok(stdout) => stdout,
+        // The item genuinely isn't there — fall through to the file lookup.
+        CommandOutput::Failed => return Ok(None),
+        // Reported as an error, not as absence: `security` stalls when its ACL
+        // no longer matches the caller, and treating that as "Claude isn't set
+        // up" would drop the card instead of saying what went wrong.
+        CommandOutput::TimedOut => {
+            return Err(format!(
+                "Claude Keychain read timed out after {}s. If macOS is prompting for keychain access, allow it and refresh.",
+                SUBPROCESS_TIMEOUT.as_secs()
+            ))
+        }
     };
     let raw = String::from_utf8(stdout)
         .map_err(|_| "Claude Keychain credentials are not UTF-8 JSON.".to_string())?;
@@ -1501,11 +1566,10 @@ fn grok_auth_path() -> PathBuf {
 
 fn load_grok_credentials() -> Result<Vec<GrokCredentials>, String> {
     let path = grok_auth_path();
-    let content = fs::read_to_string(&path).map_err(|_| {
-        "Grok auth.json not found. Run `grok login` to authenticate.".to_string()
-    })?;
-    let doc: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("parse Grok auth.json: {e}"))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|_| "Grok auth.json not found. Run `grok login` to authenticate.".to_string())?;
+    let doc: Value =
+        serde_json::from_str(&content).map_err(|e| format!("parse Grok auth.json: {e}"))?;
     grok_credential_candidates_from_value(&doc)
 }
 
@@ -1612,10 +1676,7 @@ async fn fetch_grok_network_usage(
     Ok((plan, credentials.email.clone(), windows))
 }
 
-async fn fetch_grok_subscriptions(
-    client: &reqwest::Client,
-    token: &str,
-) -> Result<Value, String> {
+async fn fetch_grok_subscriptions(client: &reqwest::Client, token: &str) -> Result<Value, String> {
     let resp = grok_bearer_request(client, token, GROK_SUBSCRIPTIONS_URL)
         .send()
         .await
@@ -1646,10 +1707,7 @@ async fn fetch_grok_task_usage(client: &reqwest::Client, token: &str) -> Result<
     resp.json().await.map_err(|e| e.to_string())
 }
 
-async fn fetch_grok_billing_grpc(
-    client: &reqwest::Client,
-    token: &str,
-) -> Result<Vec<u8>, String> {
+async fn fetch_grok_billing_grpc(client: &reqwest::Client, token: &str) -> Result<Vec<u8>, String> {
     let resp = client
         .post(GROK_BILLING_GRPC_URL)
         .header("Authorization", format!("Bearer {token}"))
@@ -1762,13 +1820,10 @@ fn wait_for_grok_rpc_response(
 }
 
 fn map_grok_metric(metric: GrokMetric, now: DateTime<Utc>) -> UsageWindow {
-    let resets = metric
-        .resets_at
-        .as_deref()
-        .and_then(parse_datetime);
-    let reset_text = metric.remaining_label.or_else(|| {
-        resets.map(|date| reset_text(date, now))
-    });
+    let resets = metric.resets_at.as_deref().and_then(parse_datetime);
+    let reset_text = metric
+        .remaining_label
+        .or_else(|| resets.map(|date| reset_text(date, now)));
     UsageWindow {
         label: metric.label,
         used_percent: metric.used_percent,
@@ -2019,10 +2074,7 @@ fn read_grok_varint(data: &[u8], pos: &mut usize) -> Option<u64> {
     None
 }
 
-fn next_grok_proto_field<'a>(
-    data: &'a [u8],
-    pos: &mut usize,
-) -> Option<(u32, GrokProtoValue<'a>)> {
+fn next_grok_proto_field<'a>(data: &'a [u8], pos: &mut usize) -> Option<(u32, GrokProtoValue<'a>)> {
     let key = read_grok_varint(data, pos)?;
     let field = u32::try_from(key >> 3).ok()?;
     let wire = key & 0x07;
@@ -2172,12 +2224,15 @@ fn claude_user_agent() -> String {
         SUBPROCESS_TIMEOUT,
     )
     .ok()
-    .flatten()
-        .and_then(|stdout| String::from_utf8(stdout).ok())
-        .and_then(|stdout| stdout.split_whitespace().next().map(str::to_string))
-        .filter(|version| !version.is_empty())
-        .map(|version| format!("claude-code/{}", version))
-        .unwrap_or_else(|| "claude-code/2.1.0".to_string())
+    .and_then(|output| match output {
+        CommandOutput::Ok(stdout) => Some(stdout),
+        CommandOutput::Failed | CommandOutput::TimedOut => None,
+    })
+    .and_then(|stdout| String::from_utf8(stdout).ok())
+    .and_then(|stdout| stdout.split_whitespace().next().map(str::to_string))
+    .filter(|version| !version.is_empty())
+    .map(|version| format!("claude-code/{}", version))
+    .unwrap_or_else(|| "claude-code/2.1.0".to_string())
 }
 
 fn string_key(
@@ -2290,13 +2345,15 @@ mod tests {
             Command::new("/bin/echo").arg("hello"),
             Duration::from_secs(5),
         );
-        assert_eq!(out.unwrap().unwrap(), b"hello\n");
+        assert!(matches!(out, Ok(CommandOutput::Ok(ref buf)) if buf == b"hello\n"));
     }
 
     #[test]
-    fn output_with_timeout_reports_none_for_a_nonzero_exit() {
+    fn output_with_timeout_separates_a_nonzero_exit_from_a_timeout() {
         let out = output_with_timeout(&mut Command::new("/usr/bin/false"), Duration::from_secs(5));
-        assert_eq!(out.unwrap(), None);
+        // Distinct from TimedOut on purpose: the Keychain caller turns one into
+        // "not configured" and the other into a surfaced error.
+        assert!(matches!(out, Ok(CommandOutput::Failed)));
     }
 
     #[test]
@@ -2306,10 +2363,36 @@ mod tests {
             Command::new("/bin/sleep").arg("30"),
             Duration::from_millis(200),
         );
-        // The point of the helper: a wedged binary costs the deadline, not the
-        // caller's thread for as long as the child feels like running.
-        assert_eq!(out.unwrap(), None);
+        assert!(matches!(out, Ok(CommandOutput::TimedOut)));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn output_with_timeout_does_not_wait_out_a_child_that_closes_stdout_and_lingers() {
+        // The failure this guards: `read_to_end` returns as soon as the pipe
+        // closes, so an unbounded wait() would block here for the child's full
+        // lifetime and report success as if nothing were wrong.
+        let started = Instant::now();
+        let out = output_with_timeout(
+            Command::new("/bin/sh").args(["-c", "echo hi; exec 1>&-; sleep 30"]),
+            Duration::from_millis(300),
+        );
+        assert!(matches!(out, Ok(CommandOutput::TimedOut)));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn output_with_timeout_reads_stdout_larger_than_the_pipe_buffer() {
+        // Why the read happens on its own thread at all: past ~64KB the child
+        // blocks writing until someone drains the pipe.
+        let out = output_with_timeout(
+            Command::new("/bin/sh").args(["-c", "yes tokcat | head -c 200000"]),
+            Duration::from_secs(10),
+        );
+        match out {
+            Ok(CommandOutput::Ok(buf)) => assert_eq!(buf.len(), 200_000),
+            other => panic!("expected full stdout, got {:?}", other.is_ok()),
+        }
     }
 
     #[test]
@@ -2467,8 +2550,7 @@ mod tests {
         // The agent-limits panel hides Codex unless it's actually set up. The
         // gate is the presence of auth.json under CODEX_HOME — a missing file
         // means "not installed / not logged in" and the tile stays hidden.
-        let dir =
-            std::env::temp_dir().join(format!("tokcat-codex-cfg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tokcat-codex-cfg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("CODEX_HOME", &dir);
@@ -2756,10 +2838,7 @@ mod tests {
         let window = map_grok_metric(metric, now);
         assert_eq!(window.label, "Monthly");
         assert!((window.remaining_percent - 87.5).abs() < 1e-9);
-        assert_eq!(
-            window.reset_text.as_deref(),
-            Some("$87.50/$100.00 left")
-        );
+        assert_eq!(window.reset_text.as_deref(), Some("$87.50/$100.00 left"));
     }
 
     #[test]
