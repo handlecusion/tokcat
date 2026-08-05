@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -29,6 +29,11 @@ const GROK_TASK_USAGE_URL: &str = "https://grok.com/rest/tasks/usage";
 const GROK_BILLING_GRPC_URL: &str =
     "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 const GROK_USER_AGENT: &str = "Grok Build";
+
+/// Ceiling for the helper binaries we shell out to (`security`, `claude`).
+/// Generous for a healthy machine, short enough that a wedged one costs a
+/// refresh cycle rather than the session.
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -852,16 +857,65 @@ fn parse_claude_credentials_data(raw: &str) -> Result<ClaudeCredentials, String>
     })
 }
 
+/// `Command::output()` with a deadline, killing the child if it overruns.
+///
+/// Both callers run on the refresh loop's schedule and shell out to binaries
+/// that can block forever: `security` raises a modal when the keychain ACL no
+/// longer matches the caller (a code-signature change after an app update is
+/// the usual trigger), and a wedged `claude` shim never returns. Unbounded,
+/// that hangs a thread every cycle for the rest of the session.
+///
+/// `Err` is a spawn failure. `Ok(None)` covers a non-zero exit and a timeout
+/// alike — both mean "no usable output", which is what the callers act on.
+fn output_with_timeout(command: &mut Command, timeout: Duration) -> Result<Option<Vec<u8>>, String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Ok(None);
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    match rx.recv_timeout(timeout) {
+        // The pipe closed, so the child is done or nearly so; wait() collects
+        // it rather than leaving a zombie.
+        Ok(buf) => match child.wait() {
+            Ok(status) if status.success() => Ok(Some(buf)),
+            _ => Ok(None),
+        },
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Ok(None)
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn load_claude_credentials_from_keychain() -> Result<Option<String>, String> {
-    let output = std::process::Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"])
-        .output()
-        .map_err(|e| format!("read Claude Keychain credentials: {}", e))?;
-    if !output.status.success() {
+    let stdout = output_with_timeout(
+        std::process::Command::new("/usr/bin/security").args([
+            "find-generic-password",
+            "-s",
+            CLAUDE_KEYCHAIN_SERVICE,
+            "-w",
+        ]),
+        SUBPROCESS_TIMEOUT,
+    )
+    .map_err(|e| format!("read Claude Keychain credentials: {}", e))?;
+    let Some(stdout) = stdout else {
         return Ok(None);
-    }
-    let raw = String::from_utf8(output.stdout)
+    };
+    let raw = String::from_utf8(stdout)
         .map_err(|_| "Claude Keychain credentials are not UTF-8 JSON.".to_string())?;
     let raw = raw.trim_matches(['\r', '\n']).to_string();
     if raw.trim().is_empty() {
@@ -2113,17 +2167,13 @@ fn parse_datetime(value: &str) -> Option<DateTime<Utc>> {
 }
 
 fn claude_user_agent() -> String {
-    std::process::Command::new("claude")
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                String::from_utf8(output.stdout).ok()
-            } else {
-                None
-            }
-        })
+    output_with_timeout(
+        std::process::Command::new("claude").arg("--version"),
+        SUBPROCESS_TIMEOUT,
+    )
+    .ok()
+    .flatten()
+        .and_then(|stdout| String::from_utf8(stdout).ok())
         .and_then(|stdout| stdout.split_whitespace().next().map(str::to_string))
         .filter(|version| !version.is_empty())
         .map(|version| format!("claude-code/{}", version))
@@ -2233,6 +2283,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_with_timeout_returns_stdout_when_the_child_exits_cleanly() {
+        let out = output_with_timeout(
+            Command::new("/bin/echo").arg("hello"),
+            Duration::from_secs(5),
+        );
+        assert_eq!(out.unwrap().unwrap(), b"hello\n");
+    }
+
+    #[test]
+    fn output_with_timeout_reports_none_for_a_nonzero_exit() {
+        let out = output_with_timeout(&mut Command::new("/usr/bin/false"), Duration::from_secs(5));
+        assert_eq!(out.unwrap(), None);
+    }
+
+    #[test]
+    fn output_with_timeout_kills_a_child_that_overruns() {
+        let started = Instant::now();
+        let out = output_with_timeout(
+            Command::new("/bin/sleep").arg("30"),
+            Duration::from_millis(200),
+        );
+        // The point of the helper: a wedged binary costs the deadline, not the
+        // caller's thread for as long as the child feels like running.
+        assert_eq!(out.unwrap(), None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn output_with_timeout_errors_when_the_binary_is_missing() {
+        let out = output_with_timeout(
+            &mut Command::new("/nonexistent/tokcat-test-binary"),
+            Duration::from_secs(5),
+        );
+        assert!(out.is_err());
+    }
 
     fn cursor_now() -> DateTime<Utc> {
         Utc.timestamp_millis_opt(1_781_000_000_000)

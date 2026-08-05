@@ -260,7 +260,16 @@ fn spawn_refresh_loop(app: tauri::AppHandle, state: Arc<AppState>) {
             // only fires when some other event happens to wake it. Emitting
             // does the waking itself. The first tick lands one REFRESH_SECS
             // after startup, so it never races the frontend's mount fetch.
-            let _ = app.emit("agent-usage-update", &agent_usage::run().await);
+            //
+            // Spawned rather than awaited: run() talks to four upstreams and
+            // shells out to `security` and `claude`, so a slow cycle must not
+            // delay the graph rebuild below, and a wedged one must not stop
+            // the loop outright. A cycle that overruns is simply superseded by
+            // the next one.
+            let usage_app = app.clone();
+            async_runtime::spawn(async move {
+                let _ = usage_app.emit("agent-usage-update", &agent_usage::run().await);
+            });
             let years = state.known_years();
             for year in years {
                 let s = state.clone();
