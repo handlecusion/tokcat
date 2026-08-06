@@ -91,6 +91,29 @@ export function saveSettings(s: Settings) {
   } catch {}
 }
 
+// Mirror the localStorage state into a plain JSON file (via Rust) so a
+// future native build can import user settings without digging through
+// WebKit's per-origin storage. Fire-and-forget: export failure must never
+// affect the app. Reads localStorage directly so callers can invoke it
+// after any of the three keys change without threading values through.
+export async function exportSettingsSnapshot(): Promise<void> {
+  try {
+    const { isTauri } = await import('./runtime')
+    if (!isTauri()) return
+    const snapshot = {
+      schema: 1,
+      exportedAt: new Date().toISOString(),
+      settings: loadSettings(),
+      theme: localStorage.getItem('tokcat:theme:v1'),
+      usageView: localStorage.getItem('tokcat:usageview:v1'),
+    }
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('export_settings', { json: JSON.stringify(snapshot) })
+  } catch {
+    // Best-effort only.
+  }
+}
+
 export const TRAY_MODE_LABELS: Record<TrayMode, string> = {
   today_tokens: "Today's tokens (50M)",
   today_cost: "Today's cost ($5.20)",

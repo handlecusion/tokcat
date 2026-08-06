@@ -11,7 +11,7 @@ import { useGraphStream } from './hooks/useGraphStream'
 import { useAgentUsage } from './hooks/useAgentUsage'
 import { computeStats } from './lib/stats'
 import { isTauri } from './lib/runtime'
-import { computeTrayTitle, loadSettings, saveSettings, Settings } from './lib/settings'
+import { computeTrayTitle, exportSettingsSnapshot, loadSettings, saveSettings, Settings } from './lib/settings'
 import { TraceBucket, RateUpdate } from './lib/usage'
 import { UsageTraceCard } from './components/UsageTraceCard'
 import { checkForUpdatesSilent, checkForUpdatesInteractive } from './lib/updater'
@@ -80,6 +80,13 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(USAGE_VIEW_KEY, usageView) } catch {}
   }, [usageView])
+
+  // Keep the on-disk settings export in sync (runs on mount too, so users
+  // who never touch a setting still get an export). Declared after the
+  // localStorage writers above so the snapshot reads fresh values.
+  useEffect(() => {
+    void exportSettingsSnapshot()
+  }, [settings, theme, usageView])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return

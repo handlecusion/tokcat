@@ -17,6 +17,32 @@ async function withDialogShield<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// Future Tokcat releases are native Swift builds that require macOS 13+.
+// The Tauri updater replaces the .app without checking OS requirements, so
+// on macOS 11/12 we must not offer the update at all — installing it would
+// leave the user with an app that no longer launches. The WKWebView user
+// agent is frozen at 10_15_7, so the real version comes from Rust.
+const MIN_UPDATE_MACOS_MAJOR = 13
+
+let cachedMajor: number | null = null
+async function macosMajorVersion(): Promise<number> {
+  if (cachedMajor !== null) return cachedMajor
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    cachedMajor = await invoke<number>('macos_major_version')
+  } catch {
+    cachedMajor = 0
+  }
+  return cachedMajor
+}
+
+// 0 means "couldn't determine" — fail open so an sw_vers hiccup never
+// strands an up-to-date-capable user on an old version.
+async function updatesSupportedOnThisOS(): Promise<boolean> {
+  const major = await macosMajorVersion()
+  return major === 0 || major >= MIN_UPDATE_MACOS_MAJOR
+}
+
 async function applyUpdate(update: any) {
   const { relaunch } = await import('@tauri-apps/plugin-process')
   await update.downloadAndInstall()
@@ -41,6 +67,7 @@ async function promptInstall(update: any): Promise<boolean> {
 
 export async function checkForUpdatesSilent(): Promise<void> {
   if (!isTauri()) return
+  if (!(await updatesSupportedOnThisOS())) return
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
     const update = await check()
@@ -54,6 +81,15 @@ export async function checkForUpdatesSilent(): Promise<void> {
 export async function checkForUpdatesInteractive(): Promise<void> {
   if (!isTauri()) return
   const { message } = await import('@tauri-apps/plugin-dialog')
+  if (!(await updatesSupportedOnThisOS())) {
+    await withDialogShield(() =>
+      message(
+        'Tokcat updates now require macOS 13 or later.\n\nThis Mac will stay on the current version. You can keep using it — nothing else changes.',
+        { title: 'Tokcat', kind: 'info' },
+      ),
+    )
+    return
+  }
   let update: any = null
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
