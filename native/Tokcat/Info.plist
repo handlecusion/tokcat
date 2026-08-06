@@ -33,7 +33,7 @@
 	<key>SUFeedURL</key>
 	<string>https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>SPARKLE_ED_PUBLIC_KEY_PLACEHOLDER</string>
+	<string>73X+D63w154FiIFy5DlPrKatFI1bwvZtyN/7ZTdaMiI=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>3600</integer>
 </dict>

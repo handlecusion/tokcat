@@ -36,9 +36,20 @@ codesign --force --deep -s - "$APP"
 codesign --verify --deep --strict "$APP"
 
 ASSET="Tokcat_${VERSION}_universal.app.tar.gz"
-tar -C "$(dirname "$APP")" -czf "$OUT/$ASSET" Tokcat.app
+# COPYFILE_DISABLE: without it macOS tar embeds AppleDouble (._*) members
+# for every xattr-carrying file. macOS `tar -tzf` HIDES those members, but
+# the Rust tar crate inside tauri-plugin-updater treats them as real
+# entries and fails the install with PermissionDenied — every legacy
+# client would break. Found by the local 0.1.42→0.2.0 e2e test.
+COPYFILE_DISABLE=1 tar -C "$(dirname "$APP")" -czf "$OUT/$ASSET" Tokcat.app
 tar -tzf "$OUT/$ASSET" | grep -q "Sparkle.framework/Versions" \
   || { echo "Sparkle symlinks missing from tarball"; exit 1; }
+python3 - "$OUT/$ASSET" <<'EOF'
+import sys, tarfile
+bad = [m.name for m in tarfile.open(sys.argv[1]) if "/._" in m.name or m.name.startswith("._")]
+if bad:
+    sys.exit(f"AppleDouble members in updater tarball (breaks Rust tar): {bad[:5]}")
+EOF
 
 echo "==> DMG"
 STAGE="$(mktemp -d)"

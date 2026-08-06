@@ -84,8 +84,18 @@ jobs:
           # tar from the parent dir so the archive root is Tokcat.app/ —
           # same layout the Tauri updater expects; preserves symlinks
           # (Sparkle.framework's Versions/ layout must survive).
-          tar -C build/Build/Products/Release -czf "../Tokcat_${VERSION}_universal.app.tar.gz" Tokcat.app
+          # COPYFILE_DISABLE: macOS tar otherwise embeds AppleDouble (._*)
+          # members for xattr-carrying files; macOS tar -tzf hides them but
+          # the Rust tar crate in tauri-plugin-updater fails the install on
+          # them — verified by the local 0.1.42→0.2.0 e2e test.
+          COPYFILE_DISABLE=1 tar -C build/Build/Products/Release -czf "../Tokcat_${VERSION}_universal.app.tar.gz" Tokcat.app
           tar -tzf "../Tokcat_${VERSION}_universal.app.tar.gz" | grep -q "Tokcat.app/Contents/Frameworks/Sparkle.framework/Versions"
+          python3 - "../Tokcat_${VERSION}_universal.app.tar.gz" <<'EOF'
+          import sys, tarfile
+          bad = [m.name for m in tarfile.open(sys.argv[1]) if "/._" in m.name or m.name.startswith("._")]
+          if bad:
+              sys.exit(f"AppleDouble members in updater tarball (breaks Rust tar): {bad[:5]}")
+          EOF
 
       - name: Package DMG
         run: |
