@@ -2,8 +2,8 @@ import Model
 import SwiftUI
 
 // Port of DashboardTabs.tsx: Overview plus one tab per client present in
-// the payload. Client marks are colored discs with the initial letter until
-// the drawn icons land.
+// the payload. Client marks are the drawn brand glyphs (ClientIconView),
+// falling back to the colored initial disc.
 struct TabStrip: View {
     @EnvironmentObject private var store: DashboardStore
     @Environment(\.colorScheme) private var colorScheme
@@ -23,13 +23,7 @@ struct TabStrip: View {
                 ForEach(store.presentClients, id: \.self) { id in
                     let style = ClientRegistry.style(for: id)
                     tab(id: id, label: style.shortName) {
-                        ZStack {
-                            Circle().fill(style.color)
-                            Text(style.initial)
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                        .frame(width: 15, height: 15)
+                        ClientIconView(style: style, size: 15)
                     }
                 }
             }

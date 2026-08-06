@@ -150,17 +150,10 @@ struct AgentLimitsCard: View {
         )
     }
 
-    /// Colored disc with the display name's initial (clients.ts marks minus
-    /// the drawn SVG glyphs, same as the tabs/legends).
+    /// Drawn brand glyph (clients.ts marks), falling back to the colored
+    /// disc with the display name's initial — same as the tabs/legends.
     private func clientMark(_ style: ClientStyle) -> some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(style.color)
-            .frame(width: 18, height: 18)
-            .overlay(
-                Text(style.initial)
-                    .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(.white)
-            )
+        ClientIconView(style: style, size: 18, cornerRadius: 5)
     }
 
     // MARK: - Window row

@@ -30,6 +30,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public private(set) var statusItemController: StatusItemController?
     public private(set) var panelController: TrayPanelController?
+    private var hotKeyCenter: HotKeyCenter?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -45,16 +46,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let statusItem = StatusItemController()
         statusItem.onLeftClick = { [weak self] in
-            guard let self else { return }
-            if self.panelController?.isVisible != true {
-                self.onPanelWillShow?()
-            }
-            self.panelController?.toggle(under: self.statusItemController?.button)
+            self?.togglePanel()
         }
         statusItem.menuProvider = { [weak self] in
             self?.makeMenu() ?? NSMenu()
         }
         statusItemController = statusItem
+
+        // Ctrl+Cmd+T toggles the panel from anywhere — parity with the
+        // Tauri app's global shortcut. Same action as a status-item click.
+        let hotKey = HotKeyCenter()
+        hotKey.onHotKey = { [weak self] in
+            self?.togglePanel()
+        }
+        hotKey.registerToggleHotKey()
+        hotKeyCenter = hotKey
+    }
+
+    public func applicationWillTerminate(_ notification: Notification) {
+        hotKeyCenter?.unregister()
+    }
+
+    private func togglePanel() {
+        if panelController?.isVisible != true {
+            onPanelWillShow?()
+        }
+        panelController?.toggle(under: statusItemController?.button)
     }
 
     public func applicationShouldHandleReopen(

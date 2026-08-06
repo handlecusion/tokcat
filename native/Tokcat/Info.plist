@@ -8,6 +8,8 @@
 	<string>Tokcat</string>
 	<key>CFBundleExecutable</key>
 	<string>tokcat</string>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
