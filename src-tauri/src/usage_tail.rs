@@ -107,6 +107,10 @@ pub struct UsageTailer {
     seen: Mutex<HashMap<String, usize>>,
     cold: Mutex<bool>,
     hermes_snapshots: Mutex<HashMap<String, HermesSnapshot>>,
+    // Test/replay hook (tail-sim): when set, all window math and timestamp
+    // fallbacks use this fixed clock instead of the wall clock. None in the
+    // app — behavior is unchanged.
+    now_override_ms: Mutex<Option<i64>>,
 }
 
 impl UsageTailer {
@@ -117,7 +121,23 @@ impl UsageTailer {
             seen: Mutex::new(HashMap::new()),
             cold: Mutex::new(true),
             hermes_snapshots: Mutex::new(HashMap::new()),
+            now_override_ms: Mutex::new(None),
         }
+    }
+
+    /// Replay hook for the `usage_dump tail-sim` bin: pin "now" so event
+    /// trimming and window rates are deterministic against fixtures.
+    pub fn set_now_override_ms(&self, now_ms: Option<i64>) {
+        *self.now_override_ms.lock() = now_ms;
+    }
+
+    fn now(&self) -> i64 {
+        self.now_override_ms.lock().unwrap_or_else(now_ms)
+    }
+
+    /// Snapshot of the raw event ring (for the tail-sim/tail-live dumps).
+    pub fn events_snapshot(&self) -> Vec<UsageEvent> {
+        self.events.lock().iter().cloned().collect()
     }
 
     pub fn tick(&self) -> usize {
@@ -128,7 +148,7 @@ impl UsageTailer {
             *c = false;
             was
         };
-        let cold_cutoff_ms = now_ms() - COLD_SCAN_LOOKBACK_SECS * 1000;
+        let cold_cutoff_ms = self.now() - COLD_SCAN_LOOKBACK_SECS * 1000;
 
         added += self.tick_hermes(is_cold);
 
@@ -339,7 +359,7 @@ impl UsageTailer {
             .get("timestamp")
             .and_then(|v| v.as_str())
             .and_then(parse_rfc3339_ms)
-            .unwrap_or_else(now_ms);
+            .unwrap_or_else(|| self.now());
 
         let is_sidechain = value
             .get("isSidechain")
@@ -454,7 +474,7 @@ impl UsageTailer {
             .get("timestamp")
             .and_then(|v| v.as_str())
             .and_then(parse_rfc3339_ms)
-            .unwrap_or_else(now_ms);
+            .unwrap_or_else(|| self.now());
 
         self.push_event(
             UsageEvent {
@@ -520,7 +540,7 @@ impl UsageTailer {
         let delta = total - previous;
         *last_total = Some(total);
 
-        let ts_ms = extract_grok_timestamp_ms(&value).unwrap_or_else(now_ms);
+        let ts_ms = extract_grok_timestamp_ms(&value).unwrap_or_else(|| self.now());
         let model = current_model
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
@@ -589,7 +609,7 @@ impl UsageTailer {
         };
 
         let mut added = 0;
-        let ts_ms = now_ms();
+        let ts_ms = self.now();
         let mut snapshots = self.hermes_snapshots.lock();
         for row in rows.flatten() {
             let (session_id, model, input, output, cache_read, cache_write) = row;
@@ -658,7 +678,7 @@ impl UsageTailer {
     }
 
     fn trim_events(&self) {
-        let cutoff = now_ms() - EVENT_WINDOW_SECS * 1000;
+        let cutoff = self.now() - EVENT_WINDOW_SECS * 1000;
         let mut events = self.events.lock();
         let mut seen = self.seen.lock();
         let before = events.len();
@@ -683,7 +703,7 @@ impl UsageTailer {
     }
 
     fn window_total(&self, secs: i64) -> i64 {
-        let cutoff = now_ms() - secs * 1000;
+        let cutoff = self.now() - secs * 1000;
         let events = self.events.lock();
         events
             .iter()
@@ -696,7 +716,7 @@ impl UsageTailer {
     /// decides whether to collapse rows by client based on the user's
     /// "detailed trace" setting.
     pub fn trace(&self, window_secs: i64) -> Vec<TraceBucket> {
-        let cutoff = now_ms() - window_secs * 1000;
+        let cutoff = self.now() - window_secs * 1000;
         let events = self.events.lock();
         let mut groups: HashMap<(String, String, String), (i64, u32)> = HashMap::new();
         for e in events.iter() {
