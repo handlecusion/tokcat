@@ -1,9 +1,13 @@
-name: Release
+name: Release (Tauri, bridge era)
 
+# Serves only the remaining 0.1.x bridge releases. From 0.2.0 the app is
+# native Swift and ships via release-native.yml — keep this workflow (and
+# the 0.1.42 assets) so macOS 11/12 users can still install the last
+# supported version.
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v0.1.*'
 
 permissions:
   contents: write
