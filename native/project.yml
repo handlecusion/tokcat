@@ -1,0 +1,58 @@
+name: Tokcat
+options:
+  bundleIdPrefix: com.handlecusion
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+packages:
+  LocalPackage:
+    path: LocalPackage
+targets:
+  Tokcat:
+    type: application
+    platform: macOS
+    sources:
+      - Tokcat
+    dependencies:
+      - package: LocalPackage
+        product: Model
+      - package: LocalPackage
+        product: UserInterface
+      - package: LocalPackage
+        product: DataSource
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.handlecusion.tokcat
+        PRODUCT_NAME: Tokcat
+        # The Tauri updater relaunches Contents/MacOS/tokcat (lowercase) —
+        # the executable name must stay lowercase even though the app
+        # bundle is Tokcat.app.
+        EXECUTABLE_NAME: tokcat
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: false
+        ENABLE_APP_SANDBOX: false
+        COMBINE_HIDPI_IMAGES: true
+    info:
+      path: Tokcat/Info.plist
+      properties:
+        CFBundleName: Tokcat
+        CFBundleDisplayName: Tokcat
+        CFBundleExecutable: tokcat
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSMinimumSystemVersion: "13.0"
+        NSHumanReadableCopyright: "© 2026 handlecusion"
+        # Sparkle 2. The appcast is published next to latest.json on every
+        # GitHub release. SUPublicEDKey is injected at release-build time
+        # (CI replaces the placeholder after `generate_keys`); a build
+        # without a real key can check the feed but refuses to install.
+        SUFeedURL: https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml
+        SUPublicEDKey: SPARKLE_ED_PUBLIC_KEY_PLACEHOLDER
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 3600
