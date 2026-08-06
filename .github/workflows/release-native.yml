@@ -52,18 +52,19 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Inject Sparkle public key
+      - name: Check Sparkle key configuration
         env:
-          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "$SPARKLE_PUBLIC_KEY" ]; then
-            echo "SPARKLE_PUBLIC_KEY secret is not set" >&2
+          # The public key is committed in project.yml; the private half
+          # must be present as a secret or the EdDSA signing step later
+          # would fail after a long build.
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "SPARKLE_PRIVATE_KEY secret is not set" >&2
             exit 1
           fi
-          # project.yml carries a placeholder so dev builds work keyless.
-          sed -i '' "s|SPARKLE_ED_PUBLIC_KEY_PLACEHOLDER|$SPARKLE_PUBLIC_KEY|" native/project.yml
-          grep -q "$SPARKLE_PUBLIC_KEY" native/project.yml
+          grep -Eq '^\s*SUPublicEDKey: \S{20,}' native/project.yml
 
       - name: Build (arm64 + x86_64, ad-hoc signed)
         run: |
