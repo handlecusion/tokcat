@@ -49,3 +49,36 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test --locked
+
+  native:
+    name: Swift build + test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: native/LocalPackage/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('native/LocalPackage/Package.resolved') }}
+
+      - name: swift build
+        working-directory: native/LocalPackage
+        run: swift build
+
+      - name: swift test
+        working-directory: native/LocalPackage
+        run: swift test
+
+      - name: xcodegen + app build
+        run: |
+          brew install xcodegen
+          cd native
+          xcodegen generate
+          xcodebuild -project Tokcat.xcodeproj -scheme Tokcat \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath build-ci \
+            CODE_SIGN_IDENTITY="-" build | tail -5
+          # Lowercase executable is a hard requirement (old-updater relaunch).
+          test -f build-ci/Build/Products/Debug/Tokcat.app/Contents/MacOS/tokcat \
+            || { echo "tokcat executable missing from bundle"; exit 1; }
