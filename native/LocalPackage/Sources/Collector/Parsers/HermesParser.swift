@@ -7,7 +7,7 @@ import Foundation
 enum HermesParser: UsageParser {
     static let clientName = "hermes"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let path = hermesDBPath() else { return [] }
         return parseHermesDB(path)
     }

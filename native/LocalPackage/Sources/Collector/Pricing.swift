@@ -47,7 +47,10 @@ struct Price: Equatable {
 /// Port of estimate_cost (usage_graph.rs:2575-2607). Reasoning tokens are
 /// billed at the output rate.
 func estimateCost(model: String, provider: String, tokens: TokenBreakdown) -> Double {
-    let price = bundledPrice(model: model, provider: provider)
+    estimateCost(price: bundledPrice(model: model, provider: provider), tokens: tokens)
+}
+
+func estimateCost(price: Price, tokens: TokenBreakdown) -> Double {
     let input = tieredCostPerMillion(
         tokens: tokens.input,
         basePrice: price.input,

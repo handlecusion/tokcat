@@ -8,7 +8,9 @@ import Foundation
 /// slot into `UsageGraph.registry` in the fixed collect_messages order.
 protocol UsageParser {
     static var clientName: String { get }
-    static func parse() -> [UsageMessage]
+    /// `cache` is the optional per-file parse cache (nil = cold run). Only
+    /// parsers whose per-file output is self-contained may use it.
+    static func parse(_ cache: UsageCache?) -> [UsageMessage]
 }
 
 public enum UsageGraphError: Error, CustomStringConvertible {
@@ -26,7 +28,7 @@ public enum UsageGraph {
 
     /// Fixed client order, mirroring collect_messages (usage_graph.rs:181-192).
     /// Order matters: dedup_messages is first-wins across the concatenation.
-    static let registry: [(name: String, parse: @Sendable () -> [UsageMessage])] = [
+    static let registry: [(name: String, parse: @Sendable (UsageCache?) -> [UsageMessage])] = [
         ("claude", ClaudeParser.parse),
         ("codex", CodexParser.parse),
         ("cursor", CursorParser.parse),
@@ -41,9 +43,13 @@ public enum UsageGraph {
 
     /// Port of run(): parse, optionally filter to a year, aggregate.
     /// `clients` restricts which parsers run (nil = all registered).
-    public static func run(year: String, clients: [String]? = nil) throws -> UsagePayload {
+    /// `cache` reuses per-file parse results across runs (nil = cold run,
+    /// bit-identical to the cacheless path).
+    public static func run(
+        year: String, clients: [String]? = nil, cache: UsageCache? = nil
+    ) throws -> UsagePayload {
         let yearFilter = try normalizeYear(year)
-        var messages = collectMessages(clients: clients)
+        var messages = collectMessages(clients: clients, cache: cache)
         if let year = yearFilter {
             let prefix = year + "-"
             messages = messages.filter { $0.date.hasPrefix(prefix) }
@@ -51,21 +57,42 @@ public enum UsageGraph {
         return buildPayload(messages)
     }
 
-    static func collectMessages(clients: [String]? = nil) -> [UsageMessage] {
+    static func collectMessages(
+        clients: [String]? = nil, cache: UsageCache? = nil
+    ) -> [UsageMessage] {
+        cache?.beginRun()
         var messages: [UsageMessage] = []
         for entry in registry {
             if let clients, !clients.contains(entry.name) { continue }
-            messages.append(contentsOf: entry.parse())
+            messages.append(contentsOf: entry.parse(cache))
         }
+        cache?.endRun()
+        // inferProvider and bundledPrice are pure per (model, provider) but
+        // string-scan heavy; memoize across the ~10^5-message pass.
+        var providerCache: [String: String] = [:]
+        var priceCache: [String: Price] = [:]
         return dedupMessages(messages).compactMap { msg -> UsageMessage? in
             var msg = msg
             if msg.timestampMs <= 0 || msg.totalTokens <= 0 { return nil }
             if rustTrim(msg.providerId).isEmpty {
-                msg.providerId = inferProvider(msg.modelId)
+                if let provider = providerCache[msg.modelId] {
+                    msg.providerId = provider
+                } else {
+                    let provider = inferProvider(msg.modelId)
+                    providerCache[msg.modelId] = provider
+                    msg.providerId = provider
+                }
             }
             if msg.cost <= 0.0 {
-                msg.cost = estimateCost(
-                    model: msg.modelId, provider: msg.providerId, tokens: msg.tokens)
+                let key = "\(msg.modelId)\u{0}\(msg.providerId)"
+                let price: Price
+                if let cached = priceCache[key] {
+                    price = cached
+                } else {
+                    price = bundledPrice(model: msg.modelId, provider: msg.providerId)
+                    priceCache[key] = price
+                }
+                msg.cost = estimateCost(price: price, tokens: msg.tokens)
             }
             return msg
         }

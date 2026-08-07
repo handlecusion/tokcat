@@ -7,7 +7,7 @@ import Foundation
 enum CopilotParser: UsageParser {
     static let clientName = "copilot"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         var files = collectFiles(joinPath(joinPath(home, ".copilot"), "otel")) {
             rustExtension($0) == "jsonl"

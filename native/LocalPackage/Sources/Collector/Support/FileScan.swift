@@ -9,22 +9,42 @@ import Foundation
 func collectFiles(_ root: String, _ pred: (String) -> Bool) -> [String] {
     var out: [String] = []
     collectFilesInner(root, pred, &out)
-    out.sort { pathComponentsLess($0, $1) }
-    return out
+    // Component-wise byte order == whole-string byte order once '/' maps to
+    // 0x00 (which sorts before every real byte and can't occur in a path
+    // component). Precomputing the keys keeps the sort O(n log n) byte
+    // compares instead of splitting both paths on every comparison.
+    var keyed = out.map { path -> (key: [UInt8], path: String) in
+        var key = [UInt8](path.utf8)
+        for i in key.indices where key[i] == UInt8(ascii: "/") { key[i] = 0 }
+        return (key, path)
+    }
+    keyed.sort { $0.key.lexicographicallyPrecedes($1.key) }
+    return keyed.map(\.path)
 }
 
 private func collectFilesInner(_ root: String, _ pred: (String) -> Bool, _ out: inout [String]) {
-    guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root) else {
-        return
-    }
-    for name in entries {
+    // readdir with d_type: same walk as Rust's DirEntry::file_type
+    // (symlinks NOT followed) without an lstat per entry.
+    guard let dir = opendir(root) else { return }
+    defer { closedir(dir) }
+    while let entry = readdir(dir) {
+        let name = withUnsafeBytes(of: &entry.pointee.d_name) { raw -> String in
+            let base = raw.baseAddress!.assumingMemoryBound(to: CChar.self)
+            return String(cString: base)
+        }
+        if name == "." || name == ".." { continue }
         let path = joinPath(root, name)
-        var sb = stat()
-        guard lstat(path, &sb) == 0 else { continue }
-        let mode = sb.st_mode & S_IFMT
-        if mode == S_IFDIR {
+        var type = Int32(entry.pointee.d_type)
+        if type == DT_UNKNOWN {
+            // Filesystems without d_type: fall back to lstat.
+            var sb = stat()
+            guard lstat(path, &sb) == 0 else { continue }
+            let mode = sb.st_mode & S_IFMT
+            type = mode == S_IFDIR ? DT_DIR : (mode == S_IFREG ? DT_REG : -1)
+        }
+        if type == DT_DIR {
             collectFilesInner(path, pred, &out)
-        } else if mode == S_IFREG, pred(path) {
+        } else if type == DT_REG, pred(path) {
             out.append(path)
         }
     }
@@ -160,6 +180,60 @@ func fileModifiedTimestampMs(_ path: String) -> Int64 {
 
 func nowMs() -> Int64 {
     Int64(Date().timeIntervalSince1970 * 1000.0)
+}
+
+/// BufRead::lines() semantics over raw file bytes without materializing
+/// Strings: calls `body` with each '\n'-split line (one trailing '\r'
+/// stripped), no trailing empty line for a final '\n', and STOPS at the
+/// first non-UTF-8 line (Rust's `map_while(Result::ok)` ends the iteration
+/// on an invalid-UTF-8 error). Lines passed to `body` are valid UTF-8.
+func forEachJSONLLine(_ data: Data, _ body: (UnsafeBufferPointer<UInt8>) -> Void) {
+    data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        let buf = raw.bindMemory(to: UInt8.self)
+        let n = buf.count
+        var start = 0
+        while start <= n {
+            // memchr for the next newline; the final chunk has no '\n'.
+            var end = n
+            if start < n, let base = buf.baseAddress,
+                let hit = memchr(base + start, Int32(UInt8(ascii: "\n")), n - start)
+            {
+                end = UnsafeRawPointer(hit) - UnsafeRawPointer(base)
+            }
+            if end == n, start == n { break }  // no trailing empty line
+            var lineEnd = end
+            if lineEnd > start, buf[lineEnd - 1] == UInt8(ascii: "\r") { lineEnd -= 1 }
+            let line = UnsafeBufferPointer(rebasing: buf[start..<lineEnd])
+            guard validUTF8(line) else { return }  // stop-at-invalid, like BufRead
+            body(line)
+            if end == n { break }
+            start = end + 1
+        }
+    }
+}
+
+/// `JSONValue.parse(rustTrim(line))` over a raw line without the String
+/// round-trip: trims the ASCII subset of Unicode whitespace in place and
+/// falls back to the full String trim only when a non-ASCII byte remains at
+/// either edge (which could be non-ASCII whitespace like U+00A0).
+/// `line` must be valid UTF-8 (forEachJSONLLine guarantees it).
+func parseTrimmedJSONLine(_ line: UnsafeBufferPointer<UInt8>) -> JSONValue? {
+    var lo = 0
+    var hi = line.count
+    func isASCIIWhitespace(_ c: UInt8) -> Bool {
+        c == 0x20 || (c >= 0x09 && c <= 0x0D)
+    }
+    while lo < hi, isASCIIWhitespace(line[lo]) { lo += 1 }
+    while hi > lo, isASCIIWhitespace(line[hi - 1]) { hi -= 1 }
+    if lo == hi { return nil }  // empty after trim: serde EOF error
+    if line[lo] >= 0x80 || line[hi - 1] >= 0x80 {
+        // Possible non-ASCII whitespace at an edge; take the exact
+        // (rare) rustTrim path.
+        let s = String(decoding: UnsafeBufferPointer(rebasing: line[lo..<hi]), as: UTF8.self)
+        return JSONValue.parse(rustTrim(s))
+    }
+    return parseSerdeJSON(
+        UnsafeBufferPointer(rebasing: line[lo..<hi]), assumeValidUTF8: true)
 }
 
 /// BufRead::lines() semantics over raw file bytes: split on '\n', strip a

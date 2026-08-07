@@ -77,6 +77,9 @@ case "graph":
         fail("\(error)", code: 1)
     }
 
+case "profile":
+    CollectorProfiler.run()
+
 case "tail-sim":
     var dir: String?
     var windowSecs: Int64 = 600

@@ -7,7 +7,7 @@ import Foundation
 enum OpenCodeParser: UsageParser {
     static let clientName = "opencode"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         var out: [UsageMessage] = []
         guard let home = homeDir() else { return out }
         let dataRoot = joinPath(xdgDataHome(home), "opencode")

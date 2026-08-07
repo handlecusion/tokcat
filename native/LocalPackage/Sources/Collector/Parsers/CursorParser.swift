@@ -7,7 +7,7 @@ import Foundation
 enum CursorParser: UsageParser {
     static let clientName = "cursor"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         let root = joinPath(joinPath(joinPath(home, ".config"), "tokscale"), "cursor-cache")
         // Preferred source: the JSON cache written by the opt-in cursor_usage

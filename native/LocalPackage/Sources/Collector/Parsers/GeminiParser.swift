@@ -8,7 +8,7 @@ import Foundation
 enum GeminiParser: UsageParser {
     static let clientName = "gemini"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         return collectFiles(joinPath(joinPath(home, ".gemini"), "tmp")) { p in
             let ext = rustExtension(p)

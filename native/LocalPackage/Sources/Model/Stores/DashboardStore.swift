@@ -121,6 +121,9 @@ public final class DashboardStore: ObservableObject {
     // MARK: - Private
 
     private let defaults: UserDefaults
+    /// Per-file parse cache shared across refreshes so the 30-minute
+    /// auto-refresh and manual refreshes only re-parse changed log files.
+    private let usageCache = UsageCache()
     private var lastRefreshCompletedAt: Date?
     private var autoRefreshTask: Task<Void, Never>?
 
@@ -188,10 +191,10 @@ public final class DashboardStore: ObservableObject {
     public func refresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
-        Task { [weak self] in
+        Task { [weak self, usageCache] in
             let result = await Task.detached(priority: .userInitiated) {
                 () -> Result<UsagePayload, any Error> in
-                do { return .success(try UsageGraph.run(year: "")) }
+                do { return .success(try UsageGraph.run(year: "", cache: usageCache)) }
                 catch { return .failure(error) }
             }.value
             guard let self else { return }

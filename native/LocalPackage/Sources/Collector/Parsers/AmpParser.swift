@@ -6,7 +6,7 @@ import Foundation
 enum AmpParser: UsageParser {
     static let clientName = "amp"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         let root = joinPath(joinPath(xdgDataHome(home), "amp"), "threads")
         return collectFiles(root) { p in

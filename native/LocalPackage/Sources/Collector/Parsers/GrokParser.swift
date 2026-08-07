@@ -14,7 +14,7 @@ import Foundation
 enum GrokParser: UsageParser {
     static let clientName = "grok"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = grokHome() else { return [] }
         let sessions = joinPath(home, "sessions")
         guard isDirectory(sessions) else { return [] }

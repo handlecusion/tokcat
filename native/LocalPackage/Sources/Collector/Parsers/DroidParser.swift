@@ -7,7 +7,7 @@ import Foundation
 enum DroidParser: UsageParser {
     static let clientName = "droid"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         return collectFiles(joinPath(joinPath(home, ".factory"), "sessions")) { p in
             rustFileName(p)?.hasSuffix(".settings.json") == true

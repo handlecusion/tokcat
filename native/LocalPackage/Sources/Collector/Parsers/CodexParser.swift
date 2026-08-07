@@ -7,7 +7,7 @@ import Foundation
 enum CodexParser: UsageParser {
     static let clientName = "codex"
 
-    static func parse() -> [UsageMessage] {
+    static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
         let env = ProcessInfo.processInfo.environment
 
@@ -35,14 +35,15 @@ enum CodexParser: UsageParser {
         // Drop duplicate roots (a launcher-provided CODEX_HOME may already
         // point at an Orca home); content dedup also runs downstream.
         var seen = Set<String>()
-        var out: [UsageMessage] = []
+        var files: [String] = []
         for root in roots {
             guard seen.insert(root).inserted else { continue }
-            for file in collectFiles(root, { rustExtension($0) == "jsonl" }) {
-                out.append(contentsOf: parseCodexFile(file))
-            }
+            files.append(contentsOf: collectFiles(root) { rustExtension($0) == "jsonl" })
         }
-        return out
+        // The delta state machine below is per-file, so files parse
+        // independently; parseFilesInOrder keeps the root/path order the
+        // downstream first-wins dedup depends on.
+        return parseFilesInOrder(files, cache: cache, parseCodexFile)
     }
 }
 
@@ -114,7 +115,7 @@ struct CodexTotals: Equatable {
     }
 }
 
-func parseCodexFile(_ path: String) -> [UsageMessage] {
+@Sendable func parseCodexFile(_ path: String) -> [UsageMessage] {
     guard let data = FileManager.default.contents(atPath: path) else { return [] }
     let fallbackTs = fileModifiedTimestampMs(path)
     var currentModel: String?
@@ -125,8 +126,8 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
     var forkedChildInheritedReportedTotal: Int64?
     var out: [UsageMessage] = []
 
-    for line in jsonlLines(data) {
-        guard let value = JSONValue.parse(rustTrim(line)) else { continue }
+    forEachJSONLLine(data) { line in
+        guard let value = parseTrimmedJSONLine(line) else { return }
         let entryType = value["type"]?.asString ?? ""
         let payload = value["payload"] ?? .null
 
@@ -155,7 +156,7 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
                         forkedChildInheritedBaseline: &forkedChildInheritedBaseline,
                         forkedChildInheritedReportedTotal: &forkedChildInheritedReportedTotal)
                 }
-                continue
+                return
             }
         }
 
@@ -168,13 +169,13 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
             if let model = stringValue(candidate) {
                 currentModel = model
             }
-            continue
+            return
         }
 
         guard entryType == "event_msg", payload["type"]?.asString == "token_count" else {
-            continue
+            return
         }
-        guard let info = payload["info"] else { continue }
+        guard let info = payload["info"] else { return }
         let model =
             stringValue(info["model"]) ?? stringValue(info["model_name"]) ?? currentModel
             ?? "unknown"
@@ -196,7 +197,7 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
             }
             forkedChildInheritedBaseline = nil
             forkedChildInheritedReportedTotal = nil
-            continue
+            return
         }
         forkedChildInheritedBaseline = nil
         forkedChildInheritedReportedTotal = nil
@@ -207,11 +208,11 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
         let nextTotals: CodexTotals?
         switch (totalUsage, lastUsage, previousTotals) {
         case (.some(let total), .some(let last), .some(let previous)):
-            if total == previous { continue }
+            if total == previous { return }
             if total.deltaFrom(previous) == nil,
                 total.looksLikeStaleRegression(previous: previous, last: last)
             {
-                continue
+                return
             }
             tokens = last.intoTokens()
             nextTotals = total
@@ -219,13 +220,13 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
             tokens = last.intoTokens()
             nextTotals = total
         case (.some(let total), .none, .some(let previous)):
-            if total == previous { continue }
+            if total == previous { return }
             if let delta = total.deltaFrom(previous) {
                 tokens = delta.intoTokens()
                 nextTotals = total
             } else {
                 previousTotals = total
-                continue
+                return
             }
         case (.some(let total), .none, .none):
             tokens = total.intoTokens()
@@ -237,9 +238,9 @@ func parseCodexFile(_ path: String) -> [UsageMessage] {
             tokens = last.intoTokens()
             nextTotals = nil
         case (.none, .none, _):
-            continue
+            return
         }
-        if tokens.total <= 0 { continue }
+        if tokens.total <= 0 { return }
         previousTotals = nextTotals
         let ts = timestampMsFromValue(value["timestamp"]) ?? fallbackTs
         var msg = UsageMessage(
