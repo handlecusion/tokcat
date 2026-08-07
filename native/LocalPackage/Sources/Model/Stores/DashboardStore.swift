@@ -102,12 +102,17 @@ public final class DashboardStore: ObservableObject {
     }
 
     /// Tab list: the union of graph clients and quota clients, sorted
-    /// (App.tsx `dashboardClients`). A client with only quota data — e.g.
-    /// Cursor before the usage-history opt-in — still gets a tab, showing
-    /// its limits card over an empty chart.
+    /// (App.tsx `dashboardClients`) — except Cursor, which only earns a tab
+    /// while the cursor.com usage fetch is enabled (or legacy CSV data
+    /// exists): with the fetch off there is no history to show, so a
+    /// quota-only Cursor tab is an empty shell. Its quota tile still
+    /// appears in the Agent limits card either way.
     public var dashboardClients: [String] {
         var union = Set(presentClients)
-        for agent in agentUsage?.agents ?? [] { union.insert(agent.clientId) }
+        for agent in agentUsage?.agents ?? [] {
+            if agent.clientId == "cursor" && !settings.cursorUsage { continue }
+            union.insert(agent.clientId)
+        }
         return union.sorted()
     }
     @Published public private(set) var autostartBusy = false
