@@ -52,6 +52,7 @@ final class AppMain {
                     .environmentObject(store)
                     .environmentObject(liveTrace)
                     .environmentObject(quota)
+                    .environmentObject(updates)
                     .onPreferenceChange(ContentHeightKey.self) { height in
                         onHeightChange(height)
                     }

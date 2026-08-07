@@ -9,6 +9,7 @@ import SwiftUI
 struct SettingsSheet: View {
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var quotaStore: QuotaStore
+    @EnvironmentObject private var updates: UpdateService
     @Environment(\.colorScheme) private var colorScheme
 
     /// Serializes the Cursor-usage opt-in fetch (the toggle is disabled
@@ -291,6 +292,25 @@ struct SettingsSheet: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            Divider().padding(.horizontal, 10)
+            // SettingsPanel.tsx parity: the manual update check lives here
+            // as well as in the tray menu / ⌘U. Automatic checks run on
+            // launch + hourly regardless (Sparkle).
+            Button {
+                updates.checkForUpdates()
+            } label: {
+                HStack {
+                    Text("Check for updates…")
+                        .font(.system(size: 12))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!updates.canCheckForUpdates)
+            .opacity(updates.canCheckForUpdates ? 1 : 0.5)
         }
     }
 
