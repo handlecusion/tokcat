@@ -23,7 +23,7 @@ struct HeaderBar: View {
     @ObservedObject private var keys = CmdHeldObserver.shared
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var spinAngle: Double = 0
+    @State private var spinStartedAt: Date?
 
     private var mode: ThemeMode {
         Themes.theme(named: store.themeName).mode(for: colorScheme)
@@ -57,21 +57,30 @@ struct HeaderBar: View {
             Button {
                 store.refresh()
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
-                    .rotationEffect(.degrees(spinAngle))
+                // Time-driven continuous spin (like the CSS .refresh-spin
+                // keyframes): a state-animated repeatForever spun up with a
+                // visible stutter and unwound BACKWARD when the refresh
+                // finished. TimelineView rotates linearly from the moment
+                // the refresh started and snaps home when it ends, exactly
+                // like removing a CSS animation class.
+                if let startedAt = spinStartedAt {
+                    TimelineView(.animation) { context in
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .rotationEffect(.degrees(
+                                context.date.timeIntervalSince(startedAt)
+                                    / 0.8 * 360))
+                    }
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                }
             }
             .buttonStyle(.borderless)
             .help("Refresh")
             .kbdPin("⌘R", visible: keys.cmdHeld)
             .onChange(of: store.isRefreshing) { refreshing in
-                if refreshing {
-                    withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
-                        spinAngle = 360
-                    }
-                } else {
-                    withAnimation(.linear(duration: 0.2)) { spinAngle = 0 }
-                }
+                spinStartedAt = refreshing ? Date() : nil
             }
 
             Button {
