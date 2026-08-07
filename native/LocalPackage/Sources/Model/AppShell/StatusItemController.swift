@@ -18,10 +18,15 @@ public final class StatusItemController: NSObject {
     private static let iconPointSize: CGFloat = 18
     private static let iconXOffset: CGFloat = 8
 
-    private let statusItem: NSStatusItem
+    private var statusItem: NSStatusItem
     private let runner = RunnerLayer()
     private var currentStyle: AnimationStyle?
+    private var currentTitle = ""
     private var appearanceObservation: NSKeyValueObservation?
+    private var recoveryTimer: Timer?
+    private var screenObserver: (any NSObjectProtocol)?
+    private var hiddenChecks = 0
+    private var lastRecoveryAt = Date.distantPast
 
     public var onLeftClick: (() -> Void)?
     public var menuProvider: (() -> NSMenu)?
@@ -31,7 +36,20 @@ public final class StatusItemController: NSObject {
     public override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        configureItem()
+        startVisibilityWatch()
 
+        // Diagnostics for the "icon vanishes on crowded menu bars" report:
+        // TOKCAT_DIAG_STATUS=1 logs the item's visibility and geometry.
+        if ProcessInfo.processInfo.environment["TOKCAT_DIAG_STATUS"] == "1" {
+            diagTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.logDiagnostics() }
+            }
+        }
+    }
+
+    private func configureItem() {
         guard let button = statusItem.button else { return }
         // Transparent placeholder so the button cell reserves an image rect
         // (image-left, title-right). With no image at all the cell collapses
@@ -47,22 +65,117 @@ public final class StatusItemController: NSObject {
         button.target = self
         button.action = #selector(handleClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.title = currentTitle
 
         installRunner(on: button)
+    }
+
+    // MARK: - Hidden-item recovery
+    //
+    // macOS persists each status item's preferred position ("NSStatusItem
+    // Preferred Position Item-0"). After a display-layout change (undocking
+    // a notched MacBook, narrower bar) that position can land inside the
+    // app-menu zone or the notch — the item's window is then parked far
+    // off-screen and macOS NEVER re-places it, even when space frees up,
+    // while `isVisible` keeps reporting true. Reproduced deterministically
+    // by seeding a large preferred position. A freshly created item with no
+    // stored position always takes the first free slot on the right, so the
+    // recovery is: detect the parked state, drop the stored position, and
+    // rebuild the item (reusing the runner layer + stored title/state).
+
+    private var isEffectivelyHidden: Bool {
+        guard let window = statusItem.button?.window else { return true }
+        if window.screen == nil { return true }
+        return !window.occlusionState.contains(.visible)
+    }
+
+    private func startVisibilityWatch() {
+        let timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.checkVisibility() }
+        }
+        timer.tolerance = 5
+        recoveryTimer = timer
+        // Dock/undock is the usual trigger — check shortly after any screen
+        // reconfiguration instead of waiting for the next timer tick.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                self?.checkVisibility()
+            }
+        }
+    }
+
+    private func checkVisibility() {
+        guard isEffectivelyHidden else {
+            hiddenChecks = 0
+            return
+        }
+        hiddenChecks += 1
+        // Two consecutive sightings (~30s) so a transient relayout doesn't
+        // trigger a rebuild; 120s backoff so a genuinely full menu bar (or
+        // a sleeping display) can't cause a rebuild storm.
+        guard hiddenChecks >= 2,
+              Date().timeIntervalSince(lastRecoveryAt) > 120 else { return }
+        hiddenChecks = 0
+        lastRecoveryAt = Date()
+        recreateItem()
+    }
+
+    private func recreateItem() {
+        NSLog("Tokcat: status item parked off-screen; rebuilding it")
+        appearanceObservation = nil
+        runner.removeFromSuperlayer()
+        NSStatusBar.system.removeStatusItem(statusItem)
+        // Re-seat the stored position near the RIGHT edge (the value is the
+        // distance from the right). Removing the preference doesn't help: a
+        // brand-new item is inserted at the LEFT end of the status area,
+        // which on a crowded bar is exactly the hidden zone it just died
+        // in (verified empirically). A small offset lands it beside the
+        // system items, in the always-visible region.
+        UserDefaults.standard.set(
+            200.0, forKey: "NSStatusItem Preferred Position Item-0")
+        statusItem = NSStatusBar.system.statusItem(
+            withLength: NSStatusItem.variableLength)
+        configureItem()
+    }
+
+    private var diagTimer: Timer?
+
+    private func logDiagnostics() {
+        let item = statusItem
+        let btn = item.button
+        let winFrame = btn?.window?.frame ?? .zero
+        let screenDesc = btn?.window?.screen.map { "\($0.frame)" } ?? "nil"
+        NSLog("TOKCAT-DIAG isVisible=%d length=%.1f buttonBounds=%@ window=%@ screen=%@ occl=%lu",
+              item.isVisible ? 1 : 0,
+              item.length,
+              NSStringFromRect(btn?.bounds ?? .zero),
+              NSStringFromRect(winFrame),
+              screenDesc,
+              btn?.window?.occlusionState.rawValue ?? 0)
     }
 
     deinit {
         // NSStatusBar APIs are main-thread only; the controller lives for
         // the app's lifetime so this is belt-and-braces.
         MainActor.assumeIsolated {
+            recoveryTimer?.invalidate()
+            if let screenObserver {
+                NotificationCenter.default.removeObserver(screenObserver)
+            }
             NSStatusBar.system.removeStatusItem(statusItem)
         }
     }
 
     // MARK: - Public API
 
-    // Sets the text shown next to the animated glyph.
+    // Sets the text shown next to the animated glyph. Stored so a rebuilt
+    // item (hidden-item recovery) comes back with the same title.
     public func setTitle(_ title: String) {
+        currentTitle = title
         statusItem.button?.title = title
     }
 
@@ -112,7 +225,9 @@ public final class StatusItemController: NSObject {
         buttonLayer.insertSublayer(runner, at: 0)
         CATransaction.commit()
 
-        setAnimationStyle(.cat)
+        // Keep the current style across a hidden-item rebuild (the runner
+        // layer already holds its frames; only a first install needs .cat).
+        setAnimationStyle(currentStyle ?? .cat)
         updateTint()
 
         // We can't subclass NSStatusBarButton (AppKit owns the instance), so
