@@ -67,9 +67,14 @@ shasum -a 256 "$OUT/Tokcat_${VERSION}_universal.dmg" | awk '{print $1}' \
   > "$OUT/Tokcat_${VERSION}_universal.dmg.sha256"
 
 echo "==> Sign (minisign, legacy Tauri channel)"
-npx --yes @tauri-apps/cli@2.11.0 signer sign -f "$TAURI_KEY" \
-  -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-  "$OUT/$ASSET"
+# The CLI auto-reads TAURI_SIGNING_PRIVATE_KEY from the env and refuses -f
+# alongside it; feed the key through the env var in both cases.
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  TAURI_SIGNING_PRIVATE_KEY="$(cat "$TAURI_KEY")"
+  export TAURI_SIGNING_PRIVATE_KEY
+fi
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+npx --yes @tauri-apps/cli@2.11.0 signer sign "$OUT/$ASSET"
 test -s "$OUT/$ASSET.sig"
 
 echo "==> Sign (Sparkle EdDSA)"
