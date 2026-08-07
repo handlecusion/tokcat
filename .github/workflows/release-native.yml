@@ -132,16 +132,14 @@ jobs:
           # The Tauri CLI signer works standalone — no Tauri project needed.
           # Same key as every 0.1.x release; old clients verify against the
           # pubkey baked into their tauri.conf.json.
-          KEYFILE="$(mktemp)"
-          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$KEYFILE"
-          # -p is always passed (empty string for an unencrypted key):
-          # omitting it makes the signer prompt on a TTY-less runner and
-          # hang the job. CLI pinned to the version package.json uses.
+          #
+          # Key/password come from the TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)
+          # env vars the CLI reads on its own — the exact mechanism every
+          # 0.1.x `tauri build` release used. Passing -f/-p as well makes
+          # the CLI abort with "--private-key-path cannot be used with
+          # --private-key" (v0.2.0 first run failed on this).
           npx --yes @tauri-apps/cli@2.11.0 signer sign \
-            -f "$KEYFILE" \
-            -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
             "Tokcat_${VERSION}_universal.app.tar.gz"
-          rm -f "$KEYFILE"
           test -s "Tokcat_${VERSION}_universal.app.tar.gz.sig"
 
       - name: Sparkle EdDSA signature
