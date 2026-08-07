@@ -26,24 +26,40 @@ public struct DashboardRootView: View {
 
     public init() {}
 
+    // Anchor for resetting the scroll position on tab switches.
+    private static let scrollTopID = "dashboard-scroll-top"
+
     public var body: some View {
         ZStack {
             // The panel clamps to 1200pt; content taller than that scrolls.
-            ScrollView(showsIndicators: false) {
-                content
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .top)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: ContentHeightKey.self,
-                                value: max(
-                                    proxy.size.height,
-                                    store.isSettingsPresented
-                                        ? Self.settingsMinHeight : 0)
-                            )
-                        }
-                    )
+            ScrollViewReader { scrollProxy in
+                ScrollView(showsIndicators: false) {
+                    content
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: ContentHeightKey.self,
+                                    value: max(
+                                        proxy.size.height,
+                                        store.isSettingsPresented
+                                            ? Self.settingsMinHeight : 0)
+                                )
+                            }
+                        )
+                        .id(Self.scrollTopID)
+                }
+                // Tab switches (click, ⌘1-9, ⌘[/⌘]) swap in content of a
+                // different natural height. AppKit keeps the old scroll
+                // offset, which on a shorter tab leaves the header pushed
+                // out of view and an empty band at the bottom of the panel
+                // (the panel resizes to the new content height while the
+                // stale offset survives). Match the web app — a tab switch
+                // always lands at the top.
+                .onChange(of: store.activeTab) { _ in
+                    scrollProxy.scrollTo(Self.scrollTopID, anchor: .top)
+                }
             }
 
             if store.isSettingsPresented {
