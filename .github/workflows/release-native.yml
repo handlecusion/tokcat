@@ -30,12 +30,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
           PROJ="$(grep -E '^\s*MARKETING_VERSION:' native/project.yml | awk '{print $2}')"
           if [ "$TAG" != "$PROJ" ]; then
             echo "Tag v$TAG != native/project.yml MARKETING_VERSION $PROJ" >&2
+            exit 1
+          fi
+          # Sparkle compares CFBundleVersion (CURRENT_PROJECT_VERSION), not
+          # the marketing version. A release that forgets to bump it ships
+          # an appcast every Sparkle client silently ignores — while the
+          # legacy latest.json channel still updates, splitting the fleet.
+          BUILD="$(grep -E '^\s*CURRENT_PROJECT_VERSION:' native/project.yml | awk '{print $2}')"
+          PREV_BUILD="$(gh release download --repo "$GITHUB_REPOSITORY" \
+              --pattern appcast.xml -O - 2>/dev/null \
+            | sed -n 's/.*<sparkle:version>\([0-9]*\)<\/sparkle:version>.*/\1/p' \
+            | head -1 || true)"
+          if [ -n "$PREV_BUILD" ] && [ "$BUILD" -le "$PREV_BUILD" ]; then
+            echo "CURRENT_PROJECT_VERSION ($BUILD) must exceed the latest release's sparkle:version ($PREV_BUILD)" >&2
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
@@ -119,9 +134,12 @@ jobs:
           # pubkey baked into their tauri.conf.json.
           KEYFILE="$(mktemp)"
           printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$KEYFILE"
-          npx --yes @tauri-apps/cli signer sign \
+          # -p is always passed (empty string for an unencrypted key):
+          # omitting it makes the signer prompt on a TTY-less runner and
+          # hang the job. CLI pinned to the version package.json uses.
+          npx --yes @tauri-apps/cli@2.11.0 signer sign \
             -f "$KEYFILE" \
-            ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+            -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
             "Tokcat_${VERSION}_universal.app.tar.gz"
           rm -f "$KEYFILE"
           test -s "Tokcat_${VERSION}_universal.app.tar.gz.sig"
@@ -273,5 +291,11 @@ jobs:
           git config user.name "tokcat-release-bot"
           git config user.email "tokcat-release-bot@users.noreply.github.com"
           git add Casks/tokcat.rb
-          git commit -m "tokcat ${VERSION}"
-          git push origin main
+          # No-change guard: a re-run with an identical cask must not fail
+          # the job on an empty commit.
+          if git diff --cached --quiet; then
+            echo "cask unchanged; nothing to push"
+          else
+            git commit -m "tokcat ${VERSION}"
+            git push origin main
+          fi

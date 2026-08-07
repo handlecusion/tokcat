@@ -20,6 +20,12 @@ TAURI_KEY="${TAURI_SIGNING_PRIVATE_KEY_PATH:-$HOME/.tauri/tokcat.key}"
 SPARKLE_KEY="${SPARKLE_PRIVATE_KEY_PATH:-$HOME/.tauri/tokcat-sparkle-ed25519.key}"
 
 git rev-parse "$TAG" >/dev/null 2>&1 || { echo "tag $TAG missing"; exit 1; }
+PREV_BUILD="$(gh release download --repo "$REPO" --pattern appcast.xml -O - 2>/dev/null \
+  | sed -n 's/.*<sparkle:version>\([0-9]*\)<\/sparkle:version>.*/\1/p' | head -1 || true)"
+if [ -n "$PREV_BUILD" ] && [ "$BUILD_NUM" -le "$PREV_BUILD" ]; then
+  echo "CURRENT_PROJECT_VERSION ($BUILD_NUM) must exceed the latest release's sparkle:version ($PREV_BUILD)"
+  exit 1
+fi
 [ -f "$TAURI_KEY" ] || { echo "minisign key missing: $TAURI_KEY"; exit 1; }
 [ -f "$SPARKLE_KEY" ] || { echo "sparkle key missing: $SPARKLE_KEY"; exit 1; }
 
@@ -61,8 +67,8 @@ shasum -a 256 "$OUT/Tokcat_${VERSION}_universal.dmg" | awk '{print $1}' \
   > "$OUT/Tokcat_${VERSION}_universal.dmg.sha256"
 
 echo "==> Sign (minisign, legacy Tauri channel)"
-npx --yes @tauri-apps/cli signer sign -f "$TAURI_KEY" \
-  ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+npx --yes @tauri-apps/cli@2.11.0 signer sign -f "$TAURI_KEY" \
+  -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
   "$OUT/$ASSET"
 test -s "$OUT/$ASSET.sig"
 
