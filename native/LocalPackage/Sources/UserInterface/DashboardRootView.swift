@@ -124,7 +124,7 @@ public struct DashboardRootView: View {
                 stats: stats)
             AgentLimitsCard(
                 clients: store.presentClients,
-                agentUsage: store.agentUsage,
+                agentUsage: store.visibleAgentUsage,
                 liveClientIds: liveClientIds)
             UsageTraceCard(
                 buckets: liveTrace.trace,
@@ -138,7 +138,7 @@ public struct DashboardRootView: View {
         VStack(spacing: 12) {
             AgentLimitsCard(
                 clients: [clientId],
-                agentUsage: store.agentUsage,
+                agentUsage: store.visibleAgentUsage,
                 liveClientIds: liveClientIds,
                 title: "\(ClientRegistry.style(for: clientId).displayName) limits",
                 note: "Session / weekly / model limits")

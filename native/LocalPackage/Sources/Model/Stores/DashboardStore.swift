@@ -109,11 +109,22 @@ public final class DashboardStore: ObservableObject {
     /// appears in the Agent limits card either way.
     public var dashboardClients: [String] {
         var union = Set(presentClients)
-        for agent in agentUsage?.agents ?? [] {
-            if agent.clientId == "cursor" && !settings.cursorUsage { continue }
+        for agent in visibleAgentUsage?.agents ?? [] {
             union.insert(agent.clientId)
         }
         return union.sorted()
+    }
+
+    /// Quota payload as the dashboard should render it: while the
+    /// cursor.com usage fetch is off, Cursor is opted out of the UI
+    /// entirely, so its quota snapshot is dropped here (tab list and the
+    /// Agent limits card both read this).
+    public var visibleAgentUsage: AgentUsagePayload? {
+        guard var payload = agentUsage else { return nil }
+        if !settings.cursorUsage {
+            payload.agents.removeAll { $0.clientId == "cursor" }
+        }
+        return payload
     }
     @Published public private(set) var autostartBusy = false
     @Published public private(set) var autostartError: String?
