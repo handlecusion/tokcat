@@ -1,0 +1,355 @@
+{
+  "humanize": [
+    [
+      0,
+      "0"
+    ],
+    [
+      1,
+      "1"
+    ],
+    [
+      999,
+      "999"
+    ],
+    [
+      1000,
+      "1.0K"
+    ],
+    [
+      1049,
+      "1.0K"
+    ],
+    [
+      1050,
+      "1.1K"
+    ],
+    [
+      1949,
+      "1.9K"
+    ],
+    [
+      1950,
+      "1.9K"
+    ],
+    [
+      999949,
+      "999.9K"
+    ],
+    [
+      999950,
+      "1000.0K"
+    ],
+    [
+      1000000,
+      "1.0M"
+    ],
+    [
+      1250000,
+      "1.3M"
+    ],
+    [
+      1349999,
+      "1.3M"
+    ],
+    [
+      999949999,
+      "999.9M"
+    ],
+    [
+      1000000000,
+      "1.0B"
+    ],
+    [
+      1500000000000,
+      "1.5T"
+    ],
+    [
+      43712345678,
+      "43.7B"
+    ]
+  ],
+  "costs": [
+    [
+      0,
+      "$0.00"
+    ],
+    [
+      0.004,
+      "$0.00"
+    ],
+    [
+      0.005,
+      "$0.01"
+    ],
+    [
+      1,
+      "$1.00"
+    ],
+    [
+      12.345,
+      "$12.35"
+    ],
+    [
+      999.994,
+      "$999.99"
+    ],
+    [
+      999.995,
+      "$1,000.00"
+    ],
+    [
+      1234.5,
+      "$1,234.50"
+    ],
+    [
+      1234567.891,
+      "$1,234,567.89"
+    ]
+  ],
+  "statsAll": {
+    "totalTokens": 1541,
+    "totalCost": 12.950000000000001,
+    "activeDays": 6,
+    "bestDay": {
+      "date": "2025-12-31",
+      "cost": 9.75
+    },
+    "averagePerDay": 2.1583333333333337,
+    "perDay": [
+      {
+        "date": "2025-12-28",
+        "tokens": 205,
+        "cost": 1.75,
+        "intensity": 1
+      },
+      {
+        "date": "2025-12-30",
+        "tokens": 10,
+        "cost": 0.05,
+        "intensity": 2
+      },
+      {
+        "date": "2025-12-31",
+        "tokens": 1200,
+        "cost": 9.75,
+        "intensity": 3
+      },
+      {
+        "date": "2026-01-01",
+        "tokens": 50,
+        "cost": 0.4,
+        "intensity": 4
+      },
+      {
+        "date": "2026-01-05",
+        "tokens": 66,
+        "cost": 0.9,
+        "intensity": 1
+      },
+      {
+        "date": "2026-01-06",
+        "tokens": 10,
+        "cost": 0.1,
+        "intensity": 1
+      }
+    ],
+    "streaks": {
+      "longest": 3,
+      "current": 2
+    },
+    "presentClients": [
+      "claude",
+      "codex",
+      "droid",
+      "gemini"
+    ],
+    "maxTokens": 1200
+  },
+  "statsClaude": {
+    "totalTokens": 1450,
+    "totalCost": 11.5,
+    "activeDays": 4,
+    "bestDay": {
+      "date": "2025-12-31",
+      "cost": 9.75
+    },
+    "averagePerDay": 2.875,
+    "perDay": [
+      {
+        "date": "2025-12-28",
+        "tokens": 190,
+        "cost": 1.25,
+        "intensity": 1
+      },
+      {
+        "date": "2025-12-31",
+        "tokens": 1200,
+        "cost": 9.75,
+        "intensity": 3
+      },
+      {
+        "date": "2026-01-01",
+        "tokens": 50,
+        "cost": 0.4,
+        "intensity": 4
+      },
+      {
+        "date": "2026-01-06",
+        "tokens": 10,
+        "cost": 0.1,
+        "intensity": 1
+      }
+    ],
+    "streaks": {
+      "longest": 2,
+      "current": 1
+    },
+    "presentClients": [
+      "claude",
+      "codex",
+      "droid",
+      "gemini"
+    ],
+    "maxTokens": 1200
+  },
+  "streakCases": {
+    "sparse": {
+      "longest": 2,
+      "current": 1
+    },
+    "empty": {
+      "longest": 0,
+      "current": 0
+    },
+    "inverted": {
+      "longest": 0,
+      "current": 0
+    },
+    "zeroTokens": {
+      "longest": 0,
+      "current": 0
+    }
+  },
+  "grids": {
+    "y2024": {
+      "cols": 53,
+      "maxTokens": 0,
+      "nCells": 371,
+      "first": {
+        "col": 0,
+        "row": 0,
+        "date": "2023-12-31",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "last": {
+        "col": 52,
+        "row": 6,
+        "date": "2025-01-04",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "cell100": {
+        "col": 14,
+        "row": 2,
+        "date": "2024-04-09",
+        "inYear": true,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "activeDates": []
+    },
+    "y2026": {
+      "cols": 53,
+      "maxTokens": 99,
+      "nCells": 371,
+      "first": {
+        "col": 0,
+        "row": 0,
+        "date": "2025-12-28",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "last": {
+        "col": 52,
+        "row": 6,
+        "date": "2027-01-02",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "cell100": {
+        "col": 14,
+        "row": 2,
+        "date": "2026-04-07",
+        "inYear": true,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "activeDates": [
+        "2026-01-01",
+        "2026-12-31"
+      ]
+    },
+    "y2000": {
+      "cols": 54,
+      "maxTokens": 0,
+      "nCells": 378,
+      "first": {
+        "col": 0,
+        "row": 0,
+        "date": "1999-12-26",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "last": {
+        "col": 53,
+        "row": 6,
+        "date": "2001-01-06",
+        "inYear": false,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "cell100": {
+        "col": 14,
+        "row": 2,
+        "date": "2000-04-04",
+        "inYear": true,
+        "active": false,
+        "tokens": 0,
+        "cost": 0
+      },
+      "activeDates": []
+    }
+  },
+  "trayCases": {
+    "hidden": "",
+    "noStats": "",
+    "totalTokens": "1.5K",
+    "totalCost": "$12.95",
+    "todayTokensMiss": "0",
+    "todayCostMiss": "$0.00",
+    "tpmNull": "—/m",
+    "tpm": "12.4K/m",
+    "tpmNeg": "0/m",
+    "planAuto": "⚠ Codex 80%",
+    "planAutoLeft": "⚠ Codex 20% left",
+    "planPinned": "Claude 42%",
+    "planPinnedGoneLabel": "⚠ Claude 80%",
+    "planPinnedNoWindows": "—",
+    "planNoData": "—"
+  }
+}

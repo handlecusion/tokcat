@@ -1,6 +1,10 @@
 [package]
 name = "tokcat"
-version = "0.1.41"
+version = "0.1.42"
+# Two [[bin]] targets exist since the usage_dump parity bin landed; without
+# this, `tauri build` can bundle usage_dump as CFBundleExecutable and ship
+# an app with no tokcat binary at all (found by the local e2e test).
+default-run = "tokcat"
 edition = "2021"
 description = "Native macOS menubar dashboard for local AI token usage"
 authors = ["handlecusion"]

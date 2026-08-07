@@ -1,0 +1,301 @@
+name: Release (native Swift)
+
+# Ships the native app for every tag from 0.2.0 on. Dual-channel forever:
+#   - appcast.xml + EdDSA signature  → Sparkle (native app users)
+#   - latest.json + minisign .sig    → legacy Tauri clients (any 0.1.x
+#     install auto-updates into the current Swift app through this)
+# INVARIANT: every release must carry ALL FIVE assets (dmg, app.tar.gz,
+# .sig, latest.json, appcast.xml). The assets job enforces it. Never mark a
+# release as prerelease and never delete one — releases/latest/download/*
+# would then point at a release missing the manifests and strand updaters.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - '!v0.1.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Check versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PROJ="$(grep -E '^\s*MARKETING_VERSION:' native/project.yml | awk '{print $2}')"
+          if [ "$TAG" != "$PROJ" ]; then
+            echo "Tag v$TAG != native/project.yml MARKETING_VERSION $PROJ" >&2
+            exit 1
+          fi
+          # Sparkle compares CFBundleVersion (CURRENT_PROJECT_VERSION), not
+          # the marketing version. A release that forgets to bump it ships
+          # an appcast every Sparkle client silently ignores — while the
+          # legacy latest.json channel still updates, splitting the fleet.
+          BUILD="$(grep -E '^\s*CURRENT_PROJECT_VERSION:' native/project.yml | awk '{print $2}')"
+          PREV_BUILD="$(gh release download --repo "$GITHUB_REPOSITORY" \
+              --pattern appcast.xml -O - 2>/dev/null \
+            | sed -n 's/.*<sparkle:version>\([0-9]*\)<\/sparkle:version>.*/\1/p' \
+            | head -1 || true)"
+          if [ -n "$PREV_BUILD" ] && [ "$BUILD" -le "$PREV_BUILD" ]; then
+            echo "CURRENT_PROJECT_VERSION ($BUILD) must exceed the latest release's sparkle:version ($PREV_BUILD)" >&2
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build universal app
+    needs: meta
+    runs-on: macos-15
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Check Sparkle key configuration
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # The public key is committed in project.yml; the private half
+          # must be present as a secret or the EdDSA signing step later
+          # would fail after a long build.
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "SPARKLE_PRIVATE_KEY secret is not set" >&2
+            exit 1
+          fi
+          grep -Eq '^\s*SUPublicEDKey: \S{20,}' native/project.yml
+
+      - name: Build (arm64 + x86_64, ad-hoc signed)
+        run: |
+          set -euo pipefail
+          cd native
+          xcodegen generate
+          xcodebuild -project Tokcat.xcodeproj -scheme Tokcat \
+            -configuration Release -destination 'platform=macOS' \
+            -derivedDataPath build \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" build
+          APP="build/Build/Products/Release/Tokcat.app"
+          lipo -archs "$APP/Contents/MacOS/tokcat" | grep -q "x86_64 arm64" \
+            || lipo -archs "$APP/Contents/MacOS/tokcat" | grep -q "arm64 x86_64"
+          codesign --force --deep -s - "$APP"
+          codesign --verify --deep --strict "$APP"
+          # tar from the parent dir so the archive root is Tokcat.app/ —
+          # same layout the Tauri updater expects; preserves symlinks
+          # (Sparkle.framework's Versions/ layout must survive).
+          # COPYFILE_DISABLE: macOS tar otherwise embeds AppleDouble (._*)
+          # members for xattr-carrying files; macOS tar -tzf hides them but
+          # the Rust tar crate in tauri-plugin-updater fails the install on
+          # them — verified by the local 0.1.42→0.2.0 e2e test.
+          COPYFILE_DISABLE=1 tar -C build/Build/Products/Release -czf "../Tokcat_${VERSION}_universal.app.tar.gz" Tokcat.app
+          tar -tzf "../Tokcat_${VERSION}_universal.app.tar.gz" | grep -q "Tokcat.app/Contents/Frameworks/Sparkle.framework/Versions"
+          python3 - "../Tokcat_${VERSION}_universal.app.tar.gz" <<'EOF'
+          import sys, tarfile
+          bad = [m.name for m in tarfile.open(sys.argv[1]) if "/._" in m.name or m.name.startswith("._")]
+          if bad:
+              sys.exit(f"AppleDouble members in updater tarball (breaks Rust tar): {bad[:5]}")
+          EOF
+
+      - name: Package DMG
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)"
+          cp -R native/build/Build/Products/Release/Tokcat.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Tokcat" -srcfolder "$STAGE" -ov \
+            -format UDZO -imagekey zlib-level=9 "Tokcat_${VERSION}_universal.dmg"
+          shasum -a 256 "Tokcat_${VERSION}_universal.dmg" | awk '{print $1}' \
+            > "Tokcat_${VERSION}_universal.dmg.sha256"
+
+      - name: Minisign signature (legacy Tauri channel)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The Tauri CLI signer works standalone — no Tauri project needed.
+          # Same key as every 0.1.x release; old clients verify against the
+          # pubkey baked into their tauri.conf.json.
+          KEYFILE="$(mktemp)"
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$KEYFILE"
+          # -p is always passed (empty string for an unencrypted key):
+          # omitting it makes the signer prompt on a TTY-less runner and
+          # hang the job. CLI pinned to the version package.json uses.
+          npx --yes @tauri-apps/cli@2.11.0 signer sign \
+            -f "$KEYFILE" \
+            -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+            "Tokcat_${VERSION}_universal.app.tar.gz"
+          rm -f "$KEYFILE"
+          test -s "Tokcat_${VERSION}_universal.app.tar.gz.sig"
+
+      - name: Sparkle EdDSA signature
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          SPARKLE_VERSION=2.6.4
+          curl -sSfL -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir sparkle-dist && tar -xf sparkle.tar.xz -C sparkle-dist
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | ./sparkle-dist/bin/sign_update \
+            --ed-key-file - "Tokcat_${VERSION}_universal.app.tar.gz" \
+            > ed-signature.txt
+          cat ed-signature.txt
+
+      - name: Generate manifests (latest.json + appcast.xml)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          ASSET="Tokcat_${VERSION}_universal.app.tar.gz"
+          SIG="$(cat "${ASSET}.sig")"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          NOTES_FILE=release-notes.md
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                --jq .object.sha 2>/dev/null | xargs -I{} gh api \
+                "repos/${GITHUB_REPOSITORY}/git/tags/{}" --jq .message \
+                > "$NOTES_FILE" 2>/dev/null || [ ! -s "$NOTES_FILE" ]; then
+            echo "Tokcat ${VERSION}" > "$NOTES_FILE"
+          fi
+
+          # Both platform keys point at the same universal artifact — the
+          # old updater only reads its own key.
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$(cat "$NOTES_FILE")" \
+            --arg pub_date "$PUB_DATE" \
+            --arg sig "$SIG" \
+            --arg url "$BASE/$ASSET" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {signature: $sig, url: $url},
+                "darwin-x86_64": {signature: $sig, url: $url}
+              }
+            }' > latest.json
+
+          ED_SIG="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' ed-signature.txt)"
+          LENGTH="$(sed -n 's/.*length="\([^"]*\)".*/\1/p' ed-signature.txt)"
+          BUILD_NUM="$(grep -E '^\s*CURRENT_PROJECT_VERSION:' native/project.yml | awk '{print $2}')"
+          python3 scripts/make_appcast.py \
+            --version "$VERSION" --build "$BUILD_NUM" \
+            --url "$BASE/$ASSET" \
+            --ed-signature "$ED_SIG" --length "$LENGTH" \
+            --notes-file "$NOTES_FILE" \
+            > appcast.xml
+
+      - name: Enforce asset completeness
+        run: |
+          set -euo pipefail
+          for f in \
+            "Tokcat_${VERSION}_universal.dmg" \
+            "Tokcat_${VERSION}_universal.app.tar.gz" \
+            "Tokcat_${VERSION}_universal.app.tar.gz.sig" \
+            latest.json appcast.xml; do
+            [ -s "$f" ] || { echo "MISSING RELEASE ASSET: $f" >&2; exit 1; }
+          done
+          jq -e '.platforms."darwin-aarch64".signature | length > 0' latest.json
+          grep -q edSignature appcast.xml
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            "Tokcat_${VERSION}_universal.dmg" \
+            "Tokcat_${VERSION}_universal.dmg.sha256" \
+            "Tokcat_${VERSION}_universal.app.tar.gz" \
+            "Tokcat_${VERSION}_universal.app.tar.gz.sig" \
+            latest.json appcast.xml \
+            --title "Tokcat $VERSION" \
+            --notes-file release-notes.md
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+        with:
+          repository: handlecusion/homebrew-tokcat
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Rewrite cask (single universal artifact)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          SHA="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Tokcat_${VERSION}_universal.dmg.sha256" -O - | tr -d '\n')"
+          cat > tap/Casks/tokcat.rb <<EOF
+          cask "tokcat" do
+            version "${VERSION}"
+            sha256 "${SHA}"
+
+            url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/Tokcat_#{version}_universal.dmg"
+            name "Tokcat"
+            desc "AI token usage monitor for the macOS menu bar"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+
+            depends_on macos: ">= :ventura"
+
+            app "Tokcat.app"
+
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{appdir}/Tokcat.app"],
+                             sudo: false
+              system_command "/usr/bin/codesign",
+                             args: ["--force", "--deep", "--sign", "-", "#{appdir}/Tokcat.app"],
+                             sudo: false
+            end
+
+            zap trash: [
+              "~/Library/Application Support/com.handlecusion.tokcat",
+              "~/Library/WebKit/com.handlecusion.tokcat",
+            ]
+          end
+          EOF
+          grep -q "version \"${VERSION}\"" tap/Casks/tokcat.rb
+      - name: Push
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "tokcat-release-bot"
+          git config user.email "tokcat-release-bot@users.noreply.github.com"
+          git add Casks/tokcat.rb
+          # No-change guard: a re-run with an identical cask must not fail
+          # the job on an empty commit.
+          if git diff --cached --quiet; then
+            echo "cask unchanged; nothing to push"
+          else
+            git commit -m "tokcat ${VERSION}"
+            git push origin main
+          fi

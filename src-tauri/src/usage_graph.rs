@@ -156,8 +156,14 @@ struct DayAccumulator {
 }
 
 pub fn run(year: &str) -> Result<Value, String> {
+    run_filtered(year, None)
+}
+
+/// Like `run`, but restricted to the named clients (None = all). Used by the
+/// `usage_dump` parity bin so the Swift port can be compared client-by-client.
+pub fn run_filtered(year: &str, clients: Option<&[String]>) -> Result<Value, String> {
     let year = normalize_year(year)?;
-    let mut messages = collect_messages();
+    let mut messages = collect_messages_filtered(clients);
     if let Some(year) = year.as_deref() {
         let prefix = format!("{}-", year);
         messages.retain(|m| m.date.starts_with(&prefix));
@@ -178,18 +184,39 @@ fn normalize_year(year: &str) -> Result<Option<String>, String> {
     }
 }
 
-fn collect_messages() -> Vec<UsageMessage> {
+fn collect_messages_filtered(clients: Option<&[String]>) -> Vec<UsageMessage> {
+    let enabled = |name: &str| clients.is_none_or(|list| list.iter().any(|c| c == name));
     let mut messages = Vec::new();
-    messages.extend(parse_claude());
-    messages.extend(parse_codex());
-    messages.extend(parse_cursor());
-    messages.extend(parse_opencode());
-    messages.extend(parse_gemini());
-    messages.extend(parse_copilot());
-    messages.extend(parse_amp());
-    messages.extend(parse_droid());
-    messages.extend(parse_hermes());
-    messages.extend(parse_grok());
+    if enabled("claude") {
+        messages.extend(parse_claude());
+    }
+    if enabled("codex") {
+        messages.extend(parse_codex());
+    }
+    if enabled("cursor") {
+        messages.extend(parse_cursor());
+    }
+    if enabled("opencode") {
+        messages.extend(parse_opencode());
+    }
+    if enabled("gemini") {
+        messages.extend(parse_gemini());
+    }
+    if enabled("copilot") {
+        messages.extend(parse_copilot());
+    }
+    if enabled("amp") {
+        messages.extend(parse_amp());
+    }
+    if enabled("droid") {
+        messages.extend(parse_droid());
+    }
+    if enabled("hermes") {
+        messages.extend(parse_hermes());
+    }
+    if enabled("grok") {
+        messages.extend(parse_grok());
+    }
 
     dedup_messages(messages)
         .into_iter()

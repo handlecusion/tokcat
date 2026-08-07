@@ -13,3 +13,10 @@ src-tauri/gen
 
 # Tooling caches
 .playwright-mcp
+
+# Native (Swift) app
+native/Tokcat.xcodeproj
+native/LocalPackage/.build
+native/build
+native/build-local
+native/LocalPackage/build

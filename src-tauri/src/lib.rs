@@ -5,8 +5,9 @@ mod cursor_usage;
 mod native_tray;
 mod state;
 mod tray;
-mod usage_graph;
-mod usage_tail;
+pub mod usage_graph;
+// pub so the usage_dump parity bin can drive the tailer (tail-sim).
+pub mod usage_tail;
 
 use serde::Serialize;
 use state::{AppState, CacheEntry};
@@ -134,6 +135,58 @@ fn quit_app(app: tauri::AppHandle) {
 #[tauri::command]
 fn hide_popover(app: tauri::AppHandle) {
     tray::hide_popover(&app);
+}
+
+/// macOS major version for the frontend's update gate. The WKWebView user
+/// agent is frozen at "10_15_7" on every modern macOS, so JS cannot detect
+/// the real OS version; ask the OS directly. Returns 0 when the version
+/// can't be determined — the frontend treats 0 as "don't gate" so an
+/// sw_vers hiccup never strands a user on an old version.
+#[tauri::command]
+fn macos_major_version() -> u32 {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+        {
+            if out.status.success() {
+                if let Some(major) = String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .split('.')
+                    .next()
+                    .and_then(|s| s.parse::<u32>().ok())
+                {
+                    return major;
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "macos"))]
+    0
+}
+
+/// Mirror the frontend's localStorage settings into a plain JSON file so a
+/// future native (non-webview) build can import them without parsing WebKit's
+/// per-origin storage. Written atomically (tmp + rename) like the Cursor
+/// cache so a crash mid-write never leaves a torn file.
+#[tauri::command]
+fn export_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json).map_err(|e| format!("invalid settings json: {}", e))?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {}", e))?;
+    let path = dir.join("settings-export.json");
+    let tmp = dir.join("settings-export.json.tmp");
+    let pretty =
+        serde_json::to_vec_pretty(&parsed).map_err(|e| format!("serialize: {}", e))?;
+    std::fs::write(&tmp, pretty).map_err(|e| format!("write: {}", e))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -405,6 +458,8 @@ pub fn run() {
             hide_popover,
             push_dialog_shield,
             pop_dialog_shield,
+            macos_major_version,
+            export_settings,
             set_animate_tray,
             set_animation_style,
             set_cursor_usage_enabled,
