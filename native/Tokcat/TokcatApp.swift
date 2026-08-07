@@ -157,7 +157,9 @@ final class AppMain {
                           let chars = event.charactersIgnoringModifiers
                     else { return false }
                     var tabs = [DashboardStore.overviewTab]
-                    tabs.append(contentsOf: store.presentClients)
+                    // Union of graph + quota clients — must match TabStrip's
+                    // tab order so ⌘N hits the tab its pin points at.
+                    tabs.append(contentsOf: store.dashboardClients)
                     switch chars {
                     case ",":
                         store.isSettingsPresented = true

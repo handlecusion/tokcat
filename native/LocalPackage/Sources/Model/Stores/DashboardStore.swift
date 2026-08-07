@@ -100,6 +100,16 @@ public final class DashboardStore: ObservableObject {
     @Published public var agentUsage: AgentUsagePayload? {
         didSet { trayTitle = computeTrayTitle() }
     }
+
+    /// Tab list: the union of graph clients and quota clients, sorted
+    /// (App.tsx `dashboardClients`). A client with only quota data — e.g.
+    /// Cursor before the usage-history opt-in — still gets a tab, showing
+    /// its limits card over an empty chart.
+    public var dashboardClients: [String] {
+        var union = Set(presentClients)
+        for agent in agentUsage?.agents ?? [] { union.insert(agent.clientId) }
+        return union.sorted()
+    }
     @Published public private(set) var autostartBusy = false
     @Published public private(set) var autostartError: String?
 
@@ -243,7 +253,9 @@ public final class DashboardStore: ObservableObject {
         }
         presentClients = present.sorted()
 
-        if activeTab != Self.overviewTab && !presentClients.contains(activeTab) {
+        // Quota-only clients keep their tab too (dashboardClients union),
+        // mirroring the App.tsx reset effect keyed on dashboardClients.
+        if activeTab != Self.overviewTab && !dashboardClients.contains(activeTab) {
             activeTab = Self.overviewTab
             return  // didSet re-enters recomputeDerived with the fixed tab
         }

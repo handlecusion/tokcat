@@ -14,6 +14,7 @@ struct UsageBarChart: View {
     let stats: Stats
 
     @EnvironmentObject private var store: DashboardStore
+    @ObservedObject private var keys = CmdHeldObserver.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var hoverIndex: Int?
 
@@ -69,16 +70,46 @@ struct UsageBarChart: View {
 
     private var theme: ThemePalette { Themes.theme(named: store.themeName) }
 
-    // Port of the bar2d-viewtoggle 2D/3D button pair.
+    // Port of the .bar2d-viewtoggle 2D/3D button pair: a bordered pill of two
+    // flat buttons where the active one fills with the theme accent (the
+    // native segmented picker can only tint system-blue). The ⌘G pin floats
+    // fully above the short control, right-aligned (.kbd-pin-toggle).
     private var viewToggle: some View {
-        Picker("", selection: $store.usageView) {
-            Text("2D").tag("2d")
-            Text("3D").tag("3d")
+        HStack(spacing: 2) {
+            segButton("2D", tag: "2d")
+            segButton("3D", tag: "3d")
         }
-        .pickerStyle(.segmented)
-        .controlSize(.small)
-        .labelsHidden()
-        .fixedSize()
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+        )
+        .kbdPin("⌘G", visible: keys.cmdHeld, offset: CGSize(width: 0, height: -21))
+    }
+
+    private func segButton(_ label: String, tag: String) -> some View {
+        let isActive = store.usageView == tag
+        return Button {
+            store.usageView = tag
+        } label: {
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isActive ? Color.white : Color.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isActive
+                              ? theme.mode(for: colorScheme).accent
+                              : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var legend: some View {

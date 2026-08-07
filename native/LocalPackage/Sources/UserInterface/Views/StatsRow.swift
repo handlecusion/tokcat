@@ -7,6 +7,15 @@ import SwiftUI
 struct StatsRow: View {
     let stats: Stats
 
+    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.colorScheme) private var colorScheme
+
+    // .usage-num is `color: var(--blue)` — the theme accent, not the label
+    // color.
+    private var accent: Color {
+        Themes.theme(named: store.themeName).mode(for: colorScheme).accent
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             cell(
@@ -37,6 +46,7 @@ struct StatsRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(num)
                 .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(accent)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label)

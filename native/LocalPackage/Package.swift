@@ -54,7 +54,10 @@ let package = Package(
         .target(
             name: "UserInterface",
             dependencies: ["DataSource", "Model"],
-            resources: [.copy("Resources/AgentIcons")],
+            resources: [
+                .copy("Resources/AgentIcons"),
+                .copy("Resources/tokcat-logo.png"),
+            ],
             swiftSettings: swiftSettings
         ),
         // Parity CLI: dumps the collector output as deterministic JSON for
