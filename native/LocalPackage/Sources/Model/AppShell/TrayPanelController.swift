@@ -10,6 +10,9 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
     private static let minHeight: CGFloat = 420
     private static let maxHeight: CGFloat = 1200
     private static let gapBelowStatusItem: CGFloat = 6
+    // tray.rs constants: MENU_BAR_H / POPOVER_SCREEN_MARGIN.
+    private static let menuBarHeight: CGFloat = 24
+    private static let screenMargin: CGFloat = 8
 
     private let panel: TrayPanel
     private let effectView: NSVisualEffectView
@@ -78,7 +81,10 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
     public func setContentHeight(_ height: CGFloat) {
         reportedContentHeight = height
         guard panel.isVisible else { return }
-        applyFrame(topAnchoredAt: panel.frame.maxY)
+        // Resize on the screen the panel is actually on — after the
+        // hidden-status-item fallback the anchor button's screen is
+        // unrelated to where the panel was placed.
+        applyFrame(topAnchoredAt: panel.frame.maxY, on: panel.screen)
     }
 
     // MARK: - Show / hide
@@ -94,10 +100,55 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
         let buttonFrame = anchorWindow.convertToScreen(
             anchor.convert(anchor.bounds, to: nil)
         )
-        let top = buttonFrame.minY - Self.gapBelowStatusItem
-        let centerX = buttonFrame.midX
-        applyFrame(topAnchoredAt: top, centerX: centerX)
+        if let screen = Self.menuBarScreen(containing: buttonFrame) {
+            let top = buttonFrame.minY - Self.gapBelowStatusItem
+            applyFrame(topAnchoredAt: top, centerX: buttonFrame.midX, on: screen)
+        } else {
+            // Status item hidden or unresolvable — a crowded menu bar or
+            // notch overflow parks its window off-screen (or at a bogus
+            // origin like x≈0, which used to drop the panel at the LEFT
+            // edge on notched MacBooks). Mirror tray.rs: dock at the main
+            // display's menu-bar right corner so the panel is always
+            // visible and menu-bar-anchored.
+            let screen = NSScreen.screens.first ?? NSScreen.main
+            let visible = screen?.visibleFrame
+                ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            applyFrame(
+                topAnchoredAt: visible.maxY - Self.gapBelowStatusItem,
+                centerX: visible.maxX - Self.screenMargin - Self.panelWidth / 2,
+                on: screen)
+        }
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// The screen whose menu-bar band actually contains the status-item
+    /// frame (port of tray.rs's tray_anchor resolution). A hidden or
+    /// overflowed item reports coordinates outside every screen's band and
+    /// yields nil. Ambiguities in overlapping layouts resolve to the screen
+    /// where the frame sits closest to the top, like the Rust min_by.
+    private static func menuBarScreen(containing rect: NSRect) -> NSScreen? {
+        let frames = NSScreen.screens.map(\.frame)
+        guard let idx = Self.menuBarScreenIndex(for: rect, screenFrames: frames)
+        else { return nil }
+        return NSScreen.screens[idx]
+    }
+
+    /// Pure core of the anchor resolution, separated for tests: returns the
+    /// index of the screen frame whose menu-bar band contains the rect.
+    static func menuBarScreenIndex(for rect: NSRect,
+                                   screenFrames: [NSRect]) -> Int? {
+        guard rect.width > 0.5 else { return nil }
+        var best: (belowTop: CGFloat, index: Int)?
+        for (index, f) in screenFrames.enumerated() {
+            guard rect.midX >= f.minX, rect.midX < f.maxX else { continue }
+            // Cocoa Y is bottom-up: distance below the screen's top edge.
+            let belowTop = f.maxY - rect.maxY
+            guard (-4.0...(Self.menuBarHeight * 2)).contains(belowTop) else { continue }
+            if best == nil || belowTop < best!.belowTop {
+                best = (belowTop, index)
+            }
+        }
+        return best?.index
     }
 
     public func hide() {
@@ -131,8 +182,13 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
 
     // MARK: - Layout
 
-    private func applyFrame(topAnchoredAt top: CGFloat, centerX: CGFloat? = nil) {
-        let screen = anchorButton?.window?.screen
+    private func applyFrame(topAnchoredAt top: CGFloat, centerX: CGFloat? = nil,
+                            on resolvedScreen: NSScreen? = nil) {
+        // The resolved anchor screen wins: a hidden status item's window
+        // reports a screen that has nothing to do with where the panel
+        // should appear.
+        let screen = resolvedScreen
+            ?? anchorButton?.window?.screen
             ?? panel.screen
             ?? NSScreen.main
         let visible = screen?.visibleFrame
