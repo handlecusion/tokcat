@@ -87,10 +87,9 @@ struct HeaderBar: View {
     }
 
     // .year-select: borderless, accent-colored, 18px semibold, with the
-    // dropdown chevron drawn by hand. The visible face is plain styled text —
-    // a borderless Menu on macOS repaints its label as a popup button (system
-    // text color, indicator moved leading), so the Menu sits on top as an
-    // invisible click target instead (menuOverlay).
+    // dropdown chevron drawn by hand. The visible face is plain styled text;
+    // clicking pops a real NSMenu — SwiftUI Menu/Picker overlays don't open
+    // reliably inside the nonactivating tray panel on macOS 13.
     private var yearSelect: some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
             Text(store.selectedYear)
@@ -99,15 +98,12 @@ struct HeaderBar: View {
                 .font(.system(size: 9, weight: .bold))
         }
         .foregroundStyle(mode.accent)
-        .overlay(menuOverlay {
-            Picker("", selection: $store.selectedYear) {
-                ForEach(store.years, id: \.self) { year in
-                    Text(year).tag(year)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.inline)
-        })
+        .contentShape(Rectangle())
+        .onTapGesture {
+            AppKitMenu.present(
+                items: store.years.map { .init(title: $0, checked: $0 == store.selectedYear) },
+                onSelect: { store.selectedYear = $0 })
+        }
     }
 
     // .theme-select: subtle gray chip — 13px text on --control-bg with a
@@ -131,27 +127,76 @@ struct HeaderBar: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
-        .overlay(menuOverlay {
-            Picker("", selection: $store.themeName) {
-                ForEach(Themes.all) { theme in
-                    Text(theme.name).tag(theme.name)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.inline)
-        })
+        .contentShape(Rectangle())
+        .onTapGesture {
+            AppKitMenu.present(
+                items: Themes.all.map { theme in
+                    .init(title: theme.name,
+                          checked: theme.name == store.themeName,
+                          dotColor: NSColor(theme.mode(for: colorScheme).accent))
+                },
+                onSelect: { store.themeName = $0 })
+        }
+    }
+}
+
+// Real AppKit menus for the header's styled selects. SwiftUI Menu (and a
+// Picker-in-Menu overlay) fails to open inside the nonactivating tray
+// panel on macOS 13; NSMenu's own tracking loop has no such problem and,
+// unlike a popover, never steals key status from the panel (so blur-hide
+// stays quiet).
+@MainActor
+enum AppKitMenu {
+    struct Item {
+        var title: String
+        var checked: Bool
+        var dotColor: NSColor?
+
+        init(title: String, checked: Bool, dotColor: NSColor? = nil) {
+            self.title = title
+            self.checked = checked
+            self.dotColor = dotColor
+        }
     }
 
-    /// A Menu stretched over the styled control face, drawing nothing itself.
-    private func menuOverlay(@ViewBuilder items: @escaping () -> some View)
-        -> some View
-    {
-        Menu(content: items) {
-            Color.clear
+    private final class Handler: NSObject {
+        let onSelect: (String) -> Void
+        init(onSelect: @escaping (String) -> Void) { self.onSelect = onSelect }
+
+        @objc func pick(_ sender: NSMenuItem) {
+            onSelect(sender.title)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .opacity(0.02)  // fully transparent Menus can drop clicks on macOS 13
-        .contentShape(Rectangle())
+    }
+
+    // Retains the handler for the lifetime of the menu tracking session.
+    private static var activeHandler: Handler?
+
+    static func present(items: [Item], onSelect: @escaping (String) -> Void) {
+        let handler = Handler(onSelect: onSelect)
+        activeHandler = handler
+
+        let menu = NSMenu()
+        for item in items {
+            let mi = NSMenuItem(title: item.title, action: #selector(Handler.pick(_:)),
+                                keyEquivalent: "")
+            mi.target = handler
+            mi.state = item.checked ? .on : .off
+            if let color = item.dotColor {
+                mi.image = swatch(color)
+            }
+            menu.addItem(mi)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        activeHandler = nil
+    }
+
+    private static func swatch(_ color: NSColor) -> NSImage {
+        let size = NSSize(width: 12, height: 12)
+        let image = NSImage(size: size, flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            return true
+        }
+        return image
     }
 }

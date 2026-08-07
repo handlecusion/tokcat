@@ -79,10 +79,11 @@ final class AppMain {
             }
         }
         delegate.onPanelWillShow = {
-            // Mirror ONESHOT_MAX_AGE_SECS: opening the panel re-collects
-            // only when the snapshot is older than 30s; quota tops up when
-            // its payload is older than 5 min (useAgentUsage.ts behavior).
-            store.refreshIfStale()
+            // No graph refresh on open — the user found the per-open
+            // refresh (spinner + tray bounce every click) noisy; the
+            // 30-minute auto-refresh loop and manual ⌘R cover freshness.
+            // Quota still tops up silently when older than 5 min
+            // (useAgentUsage.ts popover-shown behavior).
             quota.refreshIfStale()
         }
 
