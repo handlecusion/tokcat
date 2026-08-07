@@ -197,11 +197,19 @@ public final class DashboardStore: ObservableObject {
         guard !isRefreshing else { return }
         isRefreshing = true
         Task { [weak self, usageCache] in
+            let started = Date()
             let result = await Task.detached(priority: .userInitiated) {
                 () -> Result<UsagePayload, any Error> in
                 do { return .success(try UsageGraph.run(year: "", cache: usageCache)) }
                 catch { return .failure(error) }
             }.value
+            // Keep the refreshing state visible for ~450ms (the Rust app's
+            // floor): with the warm cache a collection takes ~0.1s, and a
+            // sub-frame spinner reads as "⌘R did nothing".
+            let elapsed = Date().timeIntervalSince(started)
+            if elapsed < 0.45 {
+                try? await Task.sleep(nanoseconds: UInt64((0.45 - elapsed) * 1_000_000_000))
+            }
             guard let self else { return }
             switch result {
             case .success(let payload):

@@ -154,35 +154,42 @@ final class AppMain {
                 delegate.panelController?.keyEquivalentRouter = { event in
                     let flags = event.modifierFlags
                         .intersection(.deviceIndependentFlagsMask)
-                    guard flags == .command,
-                          let chars = event.charactersIgnoringModifiers
-                    else { return false }
+                    guard flags == .command else { return false }
                     var tabs = [DashboardStore.overviewTab]
                     // Union of graph + quota clients — must match TabStrip's
                     // tab order so ⌘N hits the tab its pin points at.
                     tabs.append(contentsOf: store.dashboardClients)
-                    switch chars {
-                    case ",":
+                    // Key codes, not characters: with a Korean (or any
+                    // non-Latin) input source, charactersIgnoringModifiers
+                    // yields the IME character ("ㄱ" for R), which silently
+                    // broke every letter shortcut.
+                    switch event.keyCode {
+                    case 43:  // ,
                         store.isSettingsPresented = true
                         return true
-                    case "r":
+                    case 15:  // R
                         store.refresh()
                         return true
-                    case "g":
+                    case 5:  // G
                         store.usageView = store.usageView == "3d" ? "2d" : "3d"
                         return true
-                    case "u":
+                    case 32:  // U
                         updates.checkForUpdates()
                         return true
-                    case "[", "]":
+                    case 33, 30:  // [ / ]
                         guard let idx = tabs.firstIndex(of: store.activeTab)
                         else { return true }
-                        let delta = chars == "]" ? 1 : -1
+                        let delta = event.keyCode == 30 ? 1 : -1
                         let next = (idx + delta + tabs.count) % tabs.count
                         store.activeTab = tabs[next]
                         return true
-                    case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-                        let n = Int(chars)! - 1
+                    // ANSI digit key codes 1…9 (not contiguous).
+                    case 18, 19, 20, 21, 23, 22, 26, 28, 25:
+                        let digitByKeyCode: [UInt16: Int] = [
+                            18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
+                            22: 6, 26: 7, 28: 8, 25: 9,
+                        ]
+                        let n = digitByKeyCode[event.keyCode]! - 1
                         if n < tabs.count { store.activeTab = tabs[n] }
                         return true
                     default:

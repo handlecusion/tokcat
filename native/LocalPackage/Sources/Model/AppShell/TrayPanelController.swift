@@ -168,11 +168,15 @@ private final class TrayPanel: NSPanel {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
-            switch event.charactersIgnoringModifiers {
-            case "w":
+            // Match on key codes, not characters: with a non-Latin input
+            // source (e.g. Korean 2-set) charactersIgnoringModifiers is the
+            // IME character ("ㄱ" for the R key), so character matching
+            // silently breaks every letter shortcut.
+            switch event.keyCode {
+            case 13:  // W
                 onDismissKey?()
                 return true
-            case "q":
+            case 12:  // Q
                 NSApp.terminate(nil)
                 return true
             default:
