@@ -70,16 +70,20 @@ public struct UsageTraceCard: View {
         // Same clamp as the TSX: max(4, rate/max*100), 0 when max is 0.
         let pct = maxRate > 0 ? max(4, row.tokensPerMin / maxRate * 100) : 0
 
+        // Two-line label: client on top, agent · model below — a single
+        // line truncated all three fields into "Claude Co… main claude-f…".
         return HStack(spacing: 8) {
-            HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(clientStyle.displayName)
                     .font(.system(size: 11, weight: .semibold))
-                Text(row.agent)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Text(row.model)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    Text(row.agent)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(row.model)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .lineLimit(1)
             .truncationMode(.tail)
