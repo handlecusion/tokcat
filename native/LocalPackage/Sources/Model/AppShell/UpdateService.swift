@@ -41,6 +41,11 @@ public final class UpdateService: NSObject, ObservableObject {
     }
 
     public func checkForUpdates() {
+        // Raise the shield for the whole interactive session: Sparkle's
+        // "Checking for updates…" window and the up-to-date alert take key
+        // status before any delegate callback fires, and the panel would
+        // blur-hide underneath them. didFinishUpdateCycleFor lowers it.
+        onUpdateSessionChange?(true)
         controller?.checkForUpdates(nil)
     }
 }

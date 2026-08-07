@@ -79,6 +79,9 @@ public final class DashboardStore: ObservableObject {
         didSet {
             persistSettings()
             trayTitle = computeTrayTitle()
+            // cursorUsage gates the Cursor tab out of dashboardClients —
+            // don't leave the user stranded on a tab that just vanished.
+            revalidateActiveTab()
         }
     }
 
@@ -98,7 +101,20 @@ public final class DashboardStore: ObservableObject {
         didSet { trayTitle = computeTrayTitle() }
     }
     @Published public var agentUsage: AgentUsagePayload? {
-        didSet { trayTitle = computeTrayTitle() }
+        didSet {
+            trayTitle = computeTrayTitle()
+            // A quota-only client can drop out of the payload (signed out,
+            // provider error) and take its tab with it.
+            revalidateActiveTab()
+        }
+    }
+
+    /// Snap back to Overview when the active tab's client is no longer in
+    /// the tab list (mirrors the App.tsx effect keyed on dashboardClients).
+    private func revalidateActiveTab() {
+        if activeTab != Self.overviewTab && !dashboardClients.contains(activeTab) {
+            activeTab = Self.overviewTab
+        }
     }
 
     /// Tab list: the union of graph clients and quota clients, sorted
@@ -147,7 +163,13 @@ public final class DashboardStore: ObservableObject {
         self.defaults = defaults
         self.selectedYear = String(
             Formatters.calendar.component(.year, from: Date()))
-        self.themeName = defaults.string(forKey: Keys.theme) ?? "Blue"
+        // Unknown stored names (corrupt import, renamed theme) fall back to
+        // Blue outright so the header chip never shows a bogus label.
+        // Names duplicated from UserInterface's theme registry — Model
+        // can't import it (one-way layering); keep in sync with themes.ts.
+        let validThemes = ["Blue", "Purple", "Pink", "Orange", "Green", "Graphite"]
+        let storedTheme = defaults.string(forKey: Keys.theme) ?? "Blue"
+        self.themeName = validThemes.contains(storedTheme) ? storedTheme : "Blue"
         let view = defaults.string(forKey: Keys.usageView)
         self.usageView = (view == "3d") ? "3d" : "2d"
         self.settings = Self.loadSettings(from: defaults)
@@ -207,10 +229,19 @@ public final class DashboardStore: ObservableObject {
     public func refresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
+        let cursorEnabled = settings.cursorUsage
         Task { [weak self, usageCache] in
             let started = Date()
             let result = await Task.detached(priority: .userInitiated) {
                 () -> Result<UsagePayload, any Error> in
+                // Mirror refresh_graph/spawn_refresh_loop (lib.rs:92-94,
+                // 306-307): with the opt-in enabled, top up the Cursor
+                // events cache before the rebuild so the graph sees fresh
+                // data. Best-effort — offline/signed-out must not block
+                // the local collection.
+                if cursorEnabled {
+                    try? await CursorUsageFetcher.refreshCache()
+                }
                 do { return .success(try UsageGraph.run(year: "", cache: usageCache)) }
                 catch { return .failure(error) }
             }.value

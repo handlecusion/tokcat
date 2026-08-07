@@ -17,9 +17,12 @@ public enum PlanLogic {
     // The window closest to its cap. Used both for 'auto' mode and as the
     // fallback when a pinned label is gone: providers add and drop windows
     // over time, and the first window is an arbitrary pick that can easily
-    // be the emptiest one.
-    public static func mostConstrained(_ windows: [UsageWindow]) -> UsageWindow {
-        windows.dropFirst().reduce(windows[0]) { worst, w in
+    // be the emptiest one. Nil for an empty list (public API — callers all
+    // pre-check today, but a trap is a bad failure mode for a UI helper).
+    // Ties keep the earliest window, matching the TS reduce.
+    public static func mostConstrained(_ windows: [UsageWindow]) -> UsageWindow? {
+        guard let first = windows.first else { return nil }
+        return windows.dropFirst().reduce(first) { worst, w in
             w.usedPercent > worst.usedPercent ? w : worst
         }
     }
@@ -53,8 +56,8 @@ public enum PlanLogic {
 
         guard let agent = candidates.first(where: { $0.clientId == provider.rawValue })
         else { return nil }
-        let w = agent.windows.first(where: { $0.label == windowLabel })
-            ?? mostConstrained(agent.windows)
+        guard let w = agent.windows.first(where: { $0.label == windowLabel })
+            ?? mostConstrained(agent.windows) else { return nil }
         return PickedWindow(providerId: agent.clientId,
                             usedPercent: w.usedPercent,
                             remainingPercent: w.remainingPercent)

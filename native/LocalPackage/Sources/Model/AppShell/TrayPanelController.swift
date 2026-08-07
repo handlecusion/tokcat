@@ -158,6 +158,34 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
     }
 }
 
+// MARK: - Keyboard shortcut normalization
+
+/// Resolves the character a ⌘-shortcut should match on, layout-aware:
+/// - Latin layouts (QWERTY, Dvorak, AZERTY…): `charactersIgnoringModifiers`
+///   follows the layout, so ⌘Q is whatever key produces "q" — matching raw
+///   key codes there would bind ⌘-quit to the wrong physical key.
+/// - Non-Latin input sources (Korean 2-set…): the same property returns the
+///   IME character ("ㄱ" for the R key), so fall back to the ANSI key-code
+///   table, which is what the OS layout maps those sources onto.
+public enum KeyShortcut {
+    private static let ansiKeyCodeChars: [UInt16: Character] = [
+        12: "q", 13: "w", 15: "r", 5: "g", 32: "u", 43: ",",
+        33: "[", 30: "]",
+        18: "1", 19: "2", 20: "3", 21: "4", 23: "5",
+        22: "6", 26: "7", 28: "8", 25: "9",
+    ]
+
+    public static func normalizedChar(for event: NSEvent) -> Character? {
+        if let chars = event.charactersIgnoringModifiers,
+           chars.count == 1,
+           let scalar = chars.unicodeScalars.first,
+           scalar.isASCII {
+            return Character(Unicode.Scalar(scalar.value)!)
+        }
+        return ansiKeyCodeChars[event.keyCode]
+    }
+}
+
 // MARK: - Panel
 
 private final class TrayPanel: NSPanel {
@@ -168,19 +196,19 @@ private final class TrayPanel: NSPanel {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
-            // Match on key codes, not characters: with a non-Latin input
-            // source (e.g. Korean 2-set) charactersIgnoringModifiers is the
-            // IME character ("ㄱ" for the R key), so character matching
-            // silently breaks every letter shortcut.
-            switch event.keyCode {
-            case 13:  // W
+            // The router runs FIRST so the app layer can intercept keys the
+            // panel would otherwise swallow — e.g. ⌘W closes the settings
+            // overlay before it falls through to hide-the-panel.
+            if keyEquivalentRouter?(event) == true { return true }
+            switch KeyShortcut.normalizedChar(for: event) {
+            case "w":
                 onDismissKey?()
                 return true
-            case 12:  // Q
+            case "q":
                 NSApp.terminate(nil)
                 return true
             default:
-                if keyEquivalentRouter?(event) == true { return true }
+                break
             }
         }
         return super.performKeyEquivalent(with: event)

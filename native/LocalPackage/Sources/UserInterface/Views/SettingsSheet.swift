@@ -128,9 +128,8 @@ struct SettingsSheet: View {
         }
         let labels = windowLabels(for: provider)
         let windows = planSnapshots[provider.rawValue]?.windows ?? []
-        let fallback = windows.isEmpty
-            ? store.settings.planWindow
-            : PlanLogic.mostConstrained(windows).label
+        let fallback = PlanLogic.mostConstrained(windows)?.label
+            ?? store.settings.planWindow
         let planWindow = labels.contains(store.settings.planWindow)
             ? store.settings.planWindow : fallback
         store.settings.planProvider = provider
@@ -222,6 +221,11 @@ struct SettingsSheet: View {
             let ok = await quotaStore.setCursorUsageEnabled(enabled)
             if !ok && enabled {
                 store.settings.cursorUsage = false
+            } else if ok && enabled {
+                // Mirror App.tsx's setRefreshTick: the fetch just wrote the
+                // events cache, so rebuild the graph now instead of making
+                // the user wait for ⌘R / the 30-min tick.
+                store.refresh()
             }
             cursorUsageBusy = false
         }

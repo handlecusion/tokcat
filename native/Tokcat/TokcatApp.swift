@@ -65,6 +65,9 @@ final class AppMain {
         delegate.onMenuAction = { action in
             switch action {
             case .about:
+                // Accessory apps open windows behind the frontmost app
+                // unless activated first — About looked like a no-op.
+                NSApp.activate(ignoringOtherApps: true)
                 NSApp.orderFrontStandardAboutPanel(nil)
             case .settings:
                 store.isSettingsPresented = true
@@ -154,42 +157,41 @@ final class AppMain {
                 delegate.panelController?.keyEquivalentRouter = { event in
                     let flags = event.modifierFlags
                         .intersection(.deviceIndependentFlagsMask)
-                    guard flags == .command else { return false }
+                    guard flags == .command,
+                          let key = KeyShortcut.normalizedChar(for: event)
+                    else { return false }
                     var tabs = [DashboardStore.overviewTab]
                     // Union of graph + quota clients — must match TabStrip's
                     // tab order so ⌘N hits the tab its pin points at.
                     tabs.append(contentsOf: store.dashboardClients)
-                    // Key codes, not characters: with a Korean (or any
-                    // non-Latin) input source, charactersIgnoringModifiers
-                    // yields the IME character ("ㄱ" for R), which silently
-                    // broke every letter shortcut.
-                    switch event.keyCode {
-                    case 43:  // ,
+                    switch key {
+                    case ",":
                         store.isSettingsPresented = true
                         return true
-                    case 15:  // R
+                    case "r":
                         store.refresh()
                         return true
-                    case 5:  // G
+                    case "g":
                         store.usageView = store.usageView == "3d" ? "2d" : "3d"
                         return true
-                    case 32:  // U
+                    case "u":
                         updates.checkForUpdates()
                         return true
-                    case 33, 30:  // [ / ]
+                    case "w" where store.isSettingsPresented:
+                        // Close the topmost layer first (App.tsx:254-260);
+                        // returning false lets the panel's own ⌘W hide it
+                        // when settings are already closed.
+                        store.isSettingsPresented = false
+                        return true
+                    case "[", "]":
                         guard let idx = tabs.firstIndex(of: store.activeTab)
                         else { return true }
-                        let delta = event.keyCode == 30 ? 1 : -1
+                        let delta = key == "]" ? 1 : -1
                         let next = (idx + delta + tabs.count) % tabs.count
                         store.activeTab = tabs[next]
                         return true
-                    // ANSI digit key codes 1…9 (not contiguous).
-                    case 18, 19, 20, 21, 23, 22, 26, 28, 25:
-                        let digitByKeyCode: [UInt16: Int] = [
-                            18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
-                            22: 6, 26: 7, 28: 8, 25: 9,
-                        ]
-                        let n = digitByKeyCode[event.keyCode]! - 1
+                    case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+                        let n = Int(String(key))! - 1
                         if n < tabs.count { store.activeTab = tabs[n] }
                         return true
                     default:

@@ -53,9 +53,13 @@ public final class LiveTraceStore: ObservableObject {
                 let rate600 = await tailer.rateInWindow(Self.traceWindowSecs)
                 let buckets = await tailer.trace(windowSecs: Self.traceWindowSecs)
                 guard let self else { return }
-                self.tokensPerMin = rate60
-                self.rateInWindow600 = rate600
-                self.trace = buckets.map(TraceRow.init)
+                // Publish only on change — the 5s tick fires with the panel
+                // closed too, and identical assignments still churn the
+                // (hidden) SwiftUI hierarchy on the main thread.
+                if self.tokensPerMin != rate60 { self.tokensPerMin = rate60 }
+                if self.rateInWindow600 != rate600 { self.rateInWindow600 = rate600 }
+                let rows = buckets.map(TraceRow.init)
+                if self.trace != rows { self.trace = rows }
                 try? await Task.sleep(
                     nanoseconds: Self.tickIntervalSeconds * 1_000_000_000)
             }
