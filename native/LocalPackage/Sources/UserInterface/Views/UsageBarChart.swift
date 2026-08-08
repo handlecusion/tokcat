@@ -204,12 +204,16 @@ struct UsageBarChart: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(Formatters.formatMonthDay(bar.date))
                 .font(.system(size: 11, weight: .semibold))
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Text("\(NumberText.exactTokens(bar.totalTokens)) tokens")
-                Spacer(minLength: 8)
+                    .layoutPriority(1)
+                Spacer(minLength: 4)
                 Text(Formatters.formatCost(bar.totalCost))
+                    .fixedSize()
             }
             .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             Divider()
             ForEach(bar.segments) { segment in
                 let style = ClientRegistry.style(for: segment.clientId)
@@ -223,6 +227,8 @@ struct UsageBarChart: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             }
         }
         .padding(8)
