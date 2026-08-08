@@ -1,6 +1,6 @@
 # Tokcat
 
-> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon and Intel Macs, macOS 11+. MIT licensed.
+> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. A native Swift/SwiftUI app, distributed via Homebrew and GitHub Releases as one universal build for Apple Silicon and Intel Macs, macOS 13+. MIT licensed.
 
 ## Install
 
@@ -17,8 +17,8 @@
 
 ## Architecture
 
-- [Tauri shell source](https://github.com/handlecusion/tokcat/tree/main/src-tauri): Rust backend, native tray, animation frames
-- [Frontend source](https://github.com/handlecusion/tokcat/tree/main/src): React + Vite, react-three-fiber 3D graph
+- [App shell source](https://github.com/handlecusion/tokcat/tree/main/native/Tokcat): Swift app target, XcodeGen project, Info.plist
+- [Core package source](https://github.com/handlecusion/tokcat/tree/main/native/LocalPackage): SwiftPM package layered UserInterface → Model → DataSource, with log parsers, pricing, tailer, and quota providers in Collector; SceneKit 3D graph
 - [tokscale upstream](https://github.com/junhoyeo/tokscale): reference project for supported local log formats
 
 ## Supported AI clients
@@ -27,4 +27,4 @@ Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub C
 
 ## Privacy
 
-No telemetry. No cloud sync. No Tokcat account. Network access is limited to the GitHub Releases updater manifest checked every 30 minutes and direct Codex/Claude/Grok OAuth quota lookups when local credentials are available. Token-usage history is read locally from session logs.
+No telemetry. No cloud sync. No Tokcat account. Network access is limited to the Sparkle appcast on GitHub Releases (checked on launch and hourly) and direct Codex/Claude/Grok/Cursor quota lookups when local credentials are available. Token-usage history is read locally from session logs.

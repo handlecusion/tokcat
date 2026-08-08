@@ -8,7 +8,7 @@
   <link rel="canonical" href="https://handlecusion.github.io/tokcat/" />
   <meta name="robots" content="index,follow,max-image-preview:large" />
   <meta name="author" content="handlecusion" />
-  <meta name="keywords" content="tokcat, AI token usage monitor, AI token usage, macOS menu bar, macOS menu bar app, Claude Code usage, Claude Code usage tracker, OpenAI Codex usage, Codex usage, Codex usage tracker, Cursor usage, Cursor usage tracker, LLM cost tracker, token cost tracker, AI coding agent usage, AI coding spend, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Grok Build, Tauri 2" />
+  <meta name="keywords" content="tokcat, AI token usage monitor, AI token usage, macOS menu bar, macOS menu bar app, Claude Code usage, Claude Code usage tracker, OpenAI Codex usage, Codex usage, Codex usage tracker, Cursor usage, Cursor usage tracker, LLM cost tracker, token cost tracker, AI coding agent usage, AI coding spend, GitHub Copilot, Gemini, OpenCode, Amp, Droid, Hermes, Grok Build, Swift, SwiftUI" />
 
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Tokcat" />
@@ -46,7 +46,7 @@
         ],
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "Menu bar utility",
-        "operatingSystem": "macOS 11+ (Apple Silicon arm64 and Intel x86_64)",
+        "operatingSystem": "macOS 13+ (universal: Apple Silicon arm64 and Intel x86_64)",
         "url": "https://github.com/handlecusion/tokcat",
         "sameAs": [
           "https://github.com/handlecusion/tokcat",
@@ -56,7 +56,7 @@
         "installUrl": "https://github.com/handlecusion/tokcat#quick-start",
         "softwareHelp": "https://github.com/handlecusion/tokcat/blob/main/README.md",
         "license": "https://opensource.org/licenses/MIT",
-        "description": "AI token usage monitor for the macOS menu bar. Tokcat tracks Claude Code usage, Codex CLI usage, Cursor IDE usage, GitHub Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, Grok Build, and LLM cost tracker data as 2D stacked token bars and a 3D GitHub-style contribution graph. Reads local usage logs in a Tauri 2 shell.",
+        "description": "AI token usage monitor for the macOS menu bar. Tokcat tracks Claude Code usage, Codex CLI usage, Cursor IDE usage, GitHub Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, Grok Build, and LLM cost tracker data as 2D stacked token bars and a 3D GitHub-style contribution graph. A native Swift and SwiftUI app that reads local usage logs on-device.",
         "featureList": [
           "AI token usage monitor for macOS",
           "Claude Code usage tracker",
@@ -65,12 +65,12 @@
           "LLM cost tracker for AI coding agent usage",
           "2D stacked token chart and 3D contribution graph",
           "Overview and per-client tabs (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build)",
-          "Codex, Claude, and Grok Build OAuth agent-limit cards",
+          "Codex, Claude, Grok Build, and Cursor agent-limit cards",
           "Animated menu-bar cat icon reflecting token velocity",
           "macOS NSVisualEffectView vibrancy and light/dark adaptation",
-          "Signed in-app updater with 30-minute check interval",
+          "Signed in-app Sparkle updater checked on launch and hourly",
           "Local-only usage history with no telemetry and no Tokcat account",
-          "Launch at login via Tauri autostart"
+          "Launch at login via SMAppService"
         ],
         "offers": {
           "@type": "Offer",
@@ -107,7 +107,7 @@
             "name": "What is Tokcat?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Its Tauri 2 backend reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases for Apple Silicon and Intel Macs on macOS 11 or later."
+              "text": "Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Written in Swift and SwiftUI, it reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build in one glanceable place. Tokcat has no telemetry and no Tokcat account. It is MIT-licensed and distributed via Homebrew and GitHub Releases as one universal build for Apple Silicon and Intel Macs on macOS 13 or later."
             }
           },
           {
@@ -123,7 +123,7 @@
             "name": "Which AI coding tools does Tokcat track?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build from local logs. New client formats are added in Tokcat's Rust usage reader."
+              "text": "Tokcat tracks Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build from local logs. New client formats are added as parsers in Tokcat's Swift Collector module."
             }
           },
           {
@@ -147,7 +147,7 @@
             "name": "Does Tokcat run on Intel Macs or Windows?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Tokcat ships for Apple Silicon (arm64) and Intel (x86_64) Macs on macOS 11 or later. Windows support lives in the separate handlecusion/tokcat-window port repo; Linux is not supported."
+              "text": "Tokcat ships a single universal binary for Apple Silicon (arm64) and Intel (x86_64) Macs on macOS 13 or later. Windows support lives in the separate handlecusion/tokcat-window port repo; Linux is not supported."
             }
           }
         ]
@@ -208,7 +208,7 @@
         <dl class="hero-stats" aria-label="Tokcat highlights">
           <div>
             <dt>Runtime</dt>
-            <dd>macOS 11+ arm64/x64</dd>
+            <dd>macOS 13+ universal</dd>
           </div>
           <div>
             <dt>Data path</dt>
@@ -317,11 +317,11 @@
         <div class="feature-grid">
           <article class="feature-card">
             <h3>Glanceable</h3>
-            <p>The animated menu-bar title can show today's tokens, today's cost, total tokens, total cost, or icon-only mode.</p>
+            <p>The animated menu-bar title can show today's tokens, today's cost, total tokens, total cost, live tokens/min, plan usage percent, or icon-only mode.</p>
           </article>
           <article class="feature-card">
             <h3>Native</h3>
-            <p>Tauri 2, Rust, React, macOS vibrancy, light and dark adaptation, and a chromeless popover window.</p>
+            <p>Swift, SwiftUI, SceneKit, macOS vibrancy, light and dark adaptation, and a chromeless popover window. No web view.</p>
           </article>
           <article class="feature-card">
             <h3>Multi-client</h3>
@@ -373,7 +373,7 @@
           </details>
           <details>
             <summary>Does Tokcat run on Intel Macs or Windows?</summary>
-            <p>Tokcat ships for Apple Silicon and Intel Macs on macOS 11 or newer. Windows support lives in the separate <code>handlecusion/tokcat-window</code> port repo; Linux is not supported.</p>
+            <p>Tokcat ships one universal build for Apple Silicon and Intel Macs on macOS 13 or newer. Windows support lives in the separate <code>handlecusion/tokcat-window</code> port repo; Linux is not supported.</p>
           </details>
         </div>
       </div>
