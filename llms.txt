@@ -1,8 +1,8 @@
 # Tokcat
 
-> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. Built with Tauri 2 (Rust + React/Vite), distributed via Homebrew and GitHub Releases. Apple Silicon and Intel Macs, macOS 11+. MIT licensed.
+> Tokcat is an AI token usage monitor for the macOS menu bar: a Claude Code usage tracker, Codex usage tracker, Cursor usage dashboard, and LLM cost tracker for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build. It visualizes token usage as a recent 30-day 2D stacked token chart and a full-year 3D GitHub-style contribution graph. A native Swift/SwiftUI app, distributed via Homebrew and GitHub Releases as one universal build for Apple Silicon and Intel Macs, macOS 13+. MIT licensed.
 
-Tokcat is a Tauri 2 app with an in-process Rust local-usage reader. The menu-bar cat icon shows today's token count, USD cost, totals, live tokens/min, or icon-only mode; clicking it opens a frosted-glass popover with Overview/client tabs, 2D/3D usage views, Codex/Claude/Grok agent-limit cards, Live session throughput, streak summaries, themes, and a Settings panel. The app reads supported client logs on-device, stores no telemetry, and requires no Tokcat account.
+Tokcat is a native Swift app (SwiftUI + AppKit, SceneKit for the 3D graph) with an in-process local-usage reader — no web view, no bundled runtime. The menu-bar cat icon shows today's token count, USD cost, totals, live tokens/min, plan usage percent, or icon-only mode; clicking it opens a frosted-glass popover with Overview/client tabs, 2D/3D usage views, Codex/Claude/Grok/Cursor agent-limit cards, Live session throughput, streak summaries, themes, and a Settings panel. The app reads supported client logs on-device, stores no telemetry, and requires no Tokcat account.
 
 ## Install
 
@@ -15,12 +15,12 @@ Tokcat is a Tauri 2 app with an in-process Rust local-usage reader. The menu-bar
 - [README](https://github.com/handlecusion/tokcat/blob/main/README.md): full English documentation
 - [README (Korean)](https://github.com/handlecusion/tokcat/blob/main/README.ko-KR.md): 한국어 문서
 - [Releases](https://github.com/handlecusion/tokcat/releases): version history and signed artifacts
-- [Updater manifest](https://github.com/handlecusion/tokcat/releases/latest/download/latest.json): consumed by the in-app Tauri updater
+- [Sparkle appcast](https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml): consumed by the in-app Sparkle 2 updater
 
 ## Architecture
 
-- [Tauri shell source](https://github.com/handlecusion/tokcat/tree/main/src-tauri): Rust backend, native tray, animation frames
-- [Frontend source](https://github.com/handlecusion/tokcat/tree/main/src): React + Vite, react-three-fiber 3D graph
+- [App shell source](https://github.com/handlecusion/tokcat/tree/main/native/Tokcat): Swift app target, XcodeGen project, Info.plist
+- [Core package source](https://github.com/handlecusion/tokcat/tree/main/native/LocalPackage): SwiftPM package layered UserInterface → Model → DataSource, with log parsers, pricing, tailer, and quota providers in Collector; SceneKit 3D graph
 - [tokscale upstream](https://github.com/junhoyeo/tokscale): reference project for supported local log formats
 
 ## Supported AI clients
@@ -29,4 +29,4 @@ Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droi
 
 ## Privacy
 
-No telemetry. No cloud sync. No Tokcat account. Network access is limited to the GitHub Releases updater manifest (`latest.json`) checked every 30 minutes and direct Codex/Claude/Grok OAuth quota lookups when local credentials are available. Token-usage history is read locally from session logs on disk.
+No telemetry. No cloud sync. No Tokcat account. Network access is limited to the Sparkle appcast on GitHub Releases (checked on launch and hourly) and direct Codex/Claude/Grok/Cursor quota lookups when local credentials are available. Token-usage history is read locally from session logs on disk.
