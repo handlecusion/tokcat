@@ -18,6 +18,12 @@ public final class StatusItemController: NSObject {
     private static let iconPointSize: CGFloat = 18
     private static let iconXOffset: CGFloat = 8
 
+    // Where macOS stores the item's spot, and the copy of the value we last
+    // wrote there ourselves (so a user drag is distinguishable from it).
+    private static let positionKey = "NSStatusItem Preferred Position Item-0"
+    private static let seededPositionKey = "TokcatSeededStatusItemPosition"
+    private static let fallbackPosition = 200.0
+
     private var statusItem: NSStatusItem
     private let runner = RunnerLayer()
     private var currentStyle: AnimationStyle?
@@ -27,6 +33,7 @@ public final class StatusItemController: NSObject {
     private var screenObserver: (any NSObjectProtocol)?
     private var hiddenChecks = 0
     private var lastRecoveryAt = Date.distantPast
+    private var preservedUserPosition = false
 
     public var onLeftClick: (() -> Void)?
     public var menuProvider: (() -> NSMenu)?
@@ -83,10 +90,17 @@ public final class StatusItemController: NSObject {
     // recovery is: detect the parked state, drop the stored position, and
     // rebuild the item (reusing the runner layer + stored title/state).
 
+    // Parked means the item's window sits outside every screen. Occlusion is
+    // NOT a usable signal here: the menu bar legitimately disappears in
+    // fullscreen and under auto-hide, and treating that as parked rebuilt the
+    // item during normal use — which reset the position the user had dragged
+    // it to.
     private var isEffectivelyHidden: Bool {
         guard let window = statusItem.button?.window else { return true }
         if window.screen == nil { return true }
-        return !window.occlusionState.contains(.visible)
+        let frame = window.frame
+        guard frame.width > 0, frame.height > 0 else { return true }
+        return !NSScreen.screens.contains { $0.frame.intersects(frame) }
     }
 
     private func startVisibilityWatch() {
@@ -129,17 +143,29 @@ public final class StatusItemController: NSObject {
         appearanceObservation = nil
         runner.removeFromSuperlayer()
         NSStatusBar.system.removeStatusItem(statusItem)
-        // Re-seat the stored position near the RIGHT edge (the value is the
-        // distance from the right). Removing the preference doesn't help: a
-        // brand-new item is inserted at the LEFT end of the status area,
-        // which on a crowded bar is exactly the hidden zone it just died
-        // in (verified empirically). A small offset lands it beside the
-        // system items, in the always-visible region.
-        UserDefaults.standard.set(
-            200.0, forKey: "NSStatusItem Preferred Position Item-0")
+        reseatPositionIfNeeded()
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.variableLength)
         configureItem()
+    }
+
+    // The fallback value is the distance from the RIGHT edge. Removing the
+    // preference doesn't help: a brand-new item is inserted at the LEFT end of
+    // the status area, which on a crowded bar is exactly the hidden zone it
+    // just died in (verified empirically). A small offset lands it beside the
+    // system items, in the always-visible region. See StatusItemPlacement for
+    // when the stored position is left alone instead.
+    private func reseatPositionIfNeeded() {
+        let defaults = UserDefaults.standard
+        let decision = StatusItemPlacement.decide(
+            stored: defaults.object(forKey: Self.positionKey) as? Double,
+            seeded: defaults.object(forKey: Self.seededPositionKey) as? Double,
+            alreadyPreserved: preservedUserPosition,
+            fallback: Self.fallbackPosition)
+        preservedUserPosition = decision.preservedUserPosition
+        guard let seatAt = decision.seatAt else { return }
+        defaults.set(seatAt, forKey: Self.positionKey)
+        defaults.set(seatAt, forKey: Self.seededPositionKey)
     }
 
     private var diagTimer: Timer?
