@@ -76,7 +76,7 @@ final class AppMain {
                     under: delegate.statusItemController?.button)
             case .refreshNow:
                 store.refresh()
-                quota.refresh()
+                quota.refreshNow()
             case .checkForUpdates:
                 updates.checkForUpdates()
             case .openTokcat:
@@ -172,7 +172,7 @@ final class AppMain {
                         return true
                     case "r":
                         store.refresh()
-                        quota.refresh()
+                        quota.refreshNow()
                         return true
                     case "g":
                         store.usageView = store.usageView == "3d" ? "2d" : "3d"

@@ -67,7 +67,7 @@ struct HeaderBar: View {
                 // Quota too: an expired Claude token is only cleared by
                 // running `claude`, and Refresh is how the user asks for
                 // that to be picked up rather than waiting out the timer.
-                quotaStore.refresh()
+                quotaStore.refreshNow()
             } label: {
                 // Time-driven continuous spin (like the CSS .refresh-spin
                 // keyframes): a state-animated repeatForever spun up with a
