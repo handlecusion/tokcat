@@ -20,10 +20,18 @@ private enum BrandLogo {
 // select is a subtle gray chip (.theme-select) — neither shows a native bezel.
 struct HeaderBar: View {
     @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var quotaStore: QuotaStore
     @ObservedObject private var keys = CmdHeldObserver.shared
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var spinStartedAt: Date?
+
+    /// The button drives both stores, so it has to keep spinning until the
+    /// slower one lands — quota is the slower one (upstream calls plus
+    /// subprocess spawns) and is usually why the user pressed Refresh.
+    private var isRefreshing: Bool {
+        store.isRefreshing || quotaStore.isRefreshing
+    }
 
     private var mode: ThemeMode {
         Themes.theme(named: store.themeName).mode(for: colorScheme)
@@ -56,6 +64,10 @@ struct HeaderBar: View {
 
             Button {
                 store.refresh()
+                // Quota too: an expired Claude token is only cleared by
+                // running `claude`, and Refresh is how the user asks for
+                // that to be picked up rather than waiting out the timer.
+                quotaStore.refresh()
             } label: {
                 // Time-driven continuous spin (like the CSS .refresh-spin
                 // keyframes): a state-animated repeatForever spun up with a
@@ -79,7 +91,7 @@ struct HeaderBar: View {
             .buttonStyle(.borderless)
             .help("Refresh")
             .kbdPin("⌘R", visible: keys.cmdHeld)
-            .onChange(of: store.isRefreshing) { refreshing in
+            .onChange(of: isRefreshing) { refreshing in
                 spinStartedAt = refreshing ? Date() : nil
             }
 
