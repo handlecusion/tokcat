@@ -296,8 +296,12 @@ private func grokLine(_ total: Int64, _ model: String?, _ tsMs: Int64) -> String
             [.modificationDate: Date(timeIntervalSinceNow: -7 * 3600)],
             ofItemAtPath: path)
 
+        // fullScanIntervalMs: 0 keeps every tick an unpruned walk. This test
+        // is about the cold-scan/shrink semantics, and the file it appends to
+        // is deliberately 7h old — exactly the dormant case the pruned walk
+        // defers to the next full scan (see tieredScan* below).
         let tailer = UsageTailer(
-            config: UsageTailerConfig(simulatedHome: home.path))
+            config: UsageTailerConfig(simulatedHome: home.path, fullScanIntervalMs: 0))
         let added = await tailer.tick()
         #expect(added == 0)  // stamped at EOF, never read
         let stampedOffset = await tailer.files[path]?.offset
