@@ -15,6 +15,9 @@ struct AgentLimitsCard: View {
     var liveClientIds: Set<String> = []
     var title: String = "Agent limits"
     var note: String = "OAuth quota"
+    /// Client tabs show only their own agent; the overview also folds in
+    /// agents that report quota but have no local logs yet.
+    var includeUnlistedAgents: Bool = true
 
     /// Placeholder rows while OAuth quota is loading; real windows come from
     /// the providers (mirror of LIMIT_ROWS in AgentLimitsCard.tsx:21-31).
@@ -37,11 +40,13 @@ struct AgentLimitsCard: View {
     private var visibleClients: [String] {
         var seen = Set<String>()
         var result: [String] = []
+        let known = snapshots
         for id in clients
-        where Self.limitRows[id] != nil
+        where Self.limitRows[id] != nil || known[id] != nil
             || ["codex", "claude", "gemini", "grok"].contains(id) {
             if seen.insert(id).inserted { result.append(id) }
         }
+        guard includeUnlistedAgents else { return result }
         for agent in agentUsage?.agents ?? [] {
             if seen.insert(agent.clientId).inserted { result.append(agent.clientId) }
         }
@@ -64,9 +69,11 @@ struct AgentLimitsCard: View {
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
             } else {
+                // Tiles stretch to fill the row: two agents get two
+                // half-width columns, not two thirds plus a blank third.
                 let columns = Array(
                     repeating: GridItem(.flexible(), spacing: 8, alignment: .top),
-                    count: visible.count == 1 ? 1 : 3)
+                    count: min(max(visible.count, 1), 3))
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                     ForEach(visible, id: \.self) { id in
                         agentTile(id: id, snapshot: snapshots[id])
