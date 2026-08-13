@@ -108,6 +108,7 @@ struct AgentLimitsCard: View {
                 Text(statusText(snapshot: snapshot, isLive: isLive))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(statusColor(snapshot: snapshot, isLive: isLive))
+                    .help(snapshot.map(Self.staleHelp) ?? "")
             }
             .padding(.bottom, 8)
 
@@ -126,6 +127,8 @@ struct AgentLimitsCard: View {
                     .help(snapshot.error ?? "")
             }
 
+            // Carried-over numbers are dimmed: still readable, visibly not
+            // the current reading (QuotaStore.carryingLastGood).
             VStack(alignment: .leading, spacing: 7) {
                 if let windows = snapshot?.windows, !windows.isEmpty {
                     ForEach(windows, id: \.label) { window in
@@ -143,6 +146,7 @@ struct AgentLimitsCard: View {
                     }
                 }
             }
+            .opacity(snapshot?.stale == true ? 0.5 : 1)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,7 +207,32 @@ struct AgentLimitsCard: View {
 
     // MARK: - Status
 
+    private static let readAtParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let ageFormatter = RelativeDateTimeFormatter()
+
+    /// Tooltip for the status chip. A stale tile has to answer "how old?"
+    /// somewhere, and the chip is the part that claims the numbers are not
+    /// current; the error itself stays on the detail line.
+    static func staleHelp(_ snapshot: AgentUsageSnapshot) -> String {
+        let error = snapshot.error ?? ""
+        guard snapshot.stale == true,
+              let readAt = readAtParser.date(from: snapshot.updatedAt)
+        else { return error }
+        let ago = ageFormatter.localizedString(for: readAt, relativeTo: Date())
+        let note = "Last reading \(ago) — the numbers above are from then."
+        return error.isEmpty ? note : "\(error)\n\(note)"
+    }
+
     private func statusText(snapshot: AgentUsageSnapshot?, isLive: Bool) -> String {
+        // Stale outranks Error: the tile is still showing numbers, and
+        // saying only "Error" next to them would read as their being wrong
+        // rather than old.
+        if snapshot?.stale == true { return "Stale" }
         if snapshot?.error != nil { return "Error" }
         if let windows = snapshot?.windows, !windows.isEmpty {
             return snapshot?.source.uppercased() ?? ""
@@ -213,6 +242,7 @@ struct AgentLimitsCard: View {
     }
 
     private func statusColor(snapshot: AgentUsageSnapshot?, isLive: Bool) -> Color {
+        if snapshot?.stale == true { return .orange }
         if snapshot?.error != nil { return .red }
         if snapshot?.windows.isEmpty == false { return .secondary }
         if isLive { return .accentColor }

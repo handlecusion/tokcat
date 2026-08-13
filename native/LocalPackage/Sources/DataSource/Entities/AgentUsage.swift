@@ -47,10 +47,16 @@ public struct AgentUsageSnapshot: Sendable, Codable, Equatable {
     public var windows: [UsageWindow]
     public var credits: CreditsSnapshot?
     public var error: String?
+    /// True when `windows` were carried over from an earlier successful
+    /// fetch because the current one failed (QuotaStore.carryingLastGood).
+    /// `updatedAt` then dates the numbers, not the failed attempt, and
+    /// `error` says why they stopped moving.
+    public var stale: Bool?
 
     public init(clientId: String, source: String, updatedAt: String,
                 identity: AgentIdentity? = nil, windows: [UsageWindow] = [],
-                credits: CreditsSnapshot? = nil, error: String? = nil) {
+                credits: CreditsSnapshot? = nil, error: String? = nil,
+                stale: Bool? = nil) {
         self.clientId = clientId
         self.source = source
         self.updatedAt = updatedAt
@@ -58,6 +64,7 @@ public struct AgentUsageSnapshot: Sendable, Codable, Equatable {
         self.windows = windows
         self.credits = credits
         self.error = error
+        self.stale = stale
     }
 }
 

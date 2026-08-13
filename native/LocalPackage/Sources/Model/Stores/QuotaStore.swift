@@ -20,6 +20,11 @@ public final class QuotaStore: ObservableObject {
     public static let staleAfterSeconds: TimeInterval = 5 * 60
     /// REFRESH_SECS — the backend refresh cadence.
     private static let autoRefreshInterval: TimeInterval = 30 * 60
+    /// How long a failing provider may keep showing its last good reading
+    /// before the tile drops back to the bare error. A day out, every window
+    /// a provider reports (five-hourly, weekly, monthly) has either rolled
+    /// over or moved enough that the old numbers would mislead.
+    nonisolated public static let staleCarrySeconds: TimeInterval = 24 * 60 * 60
 
     // MARK: - Published state
 
@@ -144,11 +149,41 @@ public final class QuotaStore: ObservableObject {
         // (mirrors the generatedAtRef guard in useAgentUsage.ts).
         let stamp = Self.parseGeneratedAt(payload.generatedAt)
         if let stamp, let fetchedAt, stamp < fetchedAt { return }
-        self.payload = payload
-        self.fetchedAt = stamp ?? Date()
+        let now = stamp ?? Date()
+        self.payload = Self.carryingLastGood(payload, over: self.payload, now: now)
+        self.fetchedAt = now
     }
 
-    static func parseGeneratedAt(_ value: String) -> Date? {
+    /// A provider that fails reports an empty snapshot, which used to blank
+    /// the tile: an expired Claude token (#55) took the numbers with it, and
+    /// they only came back once the user ran `claude`. Keep the last good
+    /// reading instead, flagged `stale` and carrying the new error.
+    ///
+    /// The carried snapshot keeps its own `updatedAt`, so it dates the
+    /// numbers rather than the failed attempt — which is what bounds the
+    /// carry, and what lets the tile say how old they are.
+    nonisolated static func carryingLastGood(
+        _ payload: AgentUsagePayload, over previous: AgentUsagePayload?, now: Date
+    ) -> AgentUsagePayload {
+        guard let previous else { return payload }
+        var merged = payload
+        for index in merged.agents.indices {
+            let failed = merged.agents[index]
+            guard failed.error != nil, failed.windows.isEmpty,
+                  let last = previous.agents.first(where: { $0.clientId == failed.clientId }),
+                  !last.windows.isEmpty,
+                  let readAt = parseGeneratedAt(last.updatedAt),
+                  now.timeIntervalSince(readAt) < Self.staleCarrySeconds
+            else { continue }
+            var carried = last
+            carried.error = failed.error
+            carried.stale = true
+            merged.agents[index] = carried
+        }
+        return merged
+    }
+
+    nonisolated static func parseGeneratedAt(_ value: String) -> Date? {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: value)
