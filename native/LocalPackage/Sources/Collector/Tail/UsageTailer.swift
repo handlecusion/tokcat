@@ -147,29 +147,32 @@ public actor UsageTailer {
         for (root, client) in tailRoots() {
             var stack = [root]
             while let dir = stack.popLast() {
-                guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir)
-                else { continue }
-                for name in entries {
-                    let path = joinPath(dir, name)
-                    // Rust's DirEntry::file_type / DirEntry::metadata do not
-                    // traverse symlinks — mirror with lstat.
-                    var sb = stat()
-                    guard lstat(path, &sb) == 0 else { continue }
-                    let mode = sb.st_mode & S_IFMT
-                    if mode == S_IFDIR {
-                        stack.append(path)
+                // One getattrlistbulk pass per directory instead of a
+                // listing plus an lstat per entry: this loop runs every 5s
+                // over every session file on the machine, and the syscall
+                // count was the app's dominant energy cost. Symlinks are
+                // still described as themselves, matching Rust's
+                // DirEntry::file_type / DirEntry::metadata.
+                for entry in scanDirectory(dir) {
+                    if entry.isDir {
+                        stack.append(joinPath(dir, entry.name))
                         continue
                     }
-                    guard mode == S_IFREG else { continue }
-                    guard rustExtension(path) == "jsonl" else { continue }
+                    guard entry.isRegular else { continue }
+                    // Filter on the bare name before building the full path:
+                    // rustExtension/rustFileName each split the whole path
+                    // into an array of components, and almost every entry
+                    // here is discarded.
+                    guard hasJSONLExtension(entry.name) else { continue }
                     // Grok session dirs also contain events.jsonl /
                     // chat_history.jsonl; only updates.jsonl carries
                     // cumulative totalTokens for the live rate signal.
-                    if client == .grok, rustFileName(path) != "updates.jsonl" {
+                    if client == .grok, entry.name != "updates.jsonl" {
                         continue
                     }
-                    let size = UInt64(sb.st_size)
-                    let mtimeMs = statMtimeMs(sb)
+                    let path = joinPath(dir, entry.name)
+                    let size = entry.size
+                    let mtimeMs = entry.mtimeMs
                     let prev = files[path].map { ($0.offset, $0.mtimeMs) }
 
                     if isCold, prev == nil, mtimeMs < coldCutoffMs {
@@ -182,10 +185,15 @@ public actor UsageTailer {
                     let startOffset = prev?.0 ?? 0
                     if size == startOffset {
                         // Preserve codex/grok thread state when only mtime
-                        // refreshes without growth (:183-193).
-                        if files[path] != nil {
-                            files[path]!.offset = size
-                            files[path]!.mtimeMs = mtimeMs
+                        // refreshes without growth (:183-193). The offset
+                        // already equals `size` here, so an unchanged mtime
+                        // means there is nothing to write back — and skipping
+                        // the write matters: this is the branch every dormant
+                        // session file takes on every tick.
+                        if let existing = files[path] {
+                            if existing.mtimeMs != mtimeMs {
+                                files[path]!.mtimeMs = mtimeMs
+                            }
                         } else {
                             files[path] = .atEOF(size: size, mtimeMs: mtimeMs)
                         }
@@ -716,10 +724,3 @@ func sidechainLabelFromPath(_ path: String) -> String {
     return "subagent:\(stem)"
 }
 
-private func statMtimeMs(_ sb: stat) -> Int64 {
-    // system_time_to_ms returns 0 for pre-epoch/errored mtimes.
-    let sec = Int64(sb.st_mtimespec.tv_sec)
-    let nsec = Int64(sb.st_mtimespec.tv_nsec)
-    if sec < 0 { return 0 }
-    return sec * 1000 + nsec / 1_000_000
-}

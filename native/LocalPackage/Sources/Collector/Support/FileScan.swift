@@ -73,6 +73,13 @@ func rustExtension(_ path: String) -> String? {
     return String(name[name.index(after: dot)...])
 }
 
+/// `rustExtension(name) == "jsonl"` for a bare file name, without splitting.
+/// A name that is exactly ".jsonl" is hidden and has no extension, matching
+/// `rustExtension`'s leading-dot rule.
+func hasJSONLExtension(_ name: String) -> Bool {
+    name.utf8.count > 6 && name.hasSuffix(".jsonl")
+}
+
 /// `Path::file_name()`: the final path component.
 func rustFileName(_ path: String) -> String? {
     let name = path.split(separator: "/", omittingEmptySubsequences: true).last
