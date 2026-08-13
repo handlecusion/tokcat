@@ -81,10 +81,20 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
     public func setContentHeight(_ height: CGFloat) {
         reportedContentHeight = height
         guard panel.isVisible else { return }
+        // Resize on the NEXT runloop turn, never inside the SwiftUI layout
+        // pass that reported the height: resizing the window mid-pass leaves
+        // the hosting view's scroll view sized from a stale height (it ends
+        // up off by the height delta, applied twice), which is what clipped
+        // the header and left an empty band after a tab switch.
+        //
         // Resize on the screen the panel is actually on — after the
         // hidden-status-item fallback the anchor button's screen is
         // unrelated to where the panel was placed.
-        applyFrame(topAnchoredAt: panel.frame.maxY, on: panel.screen)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            self.applyFrame(topAnchoredAt: self.panel.frame.maxY, on: self.panel.screen)
+            self.resetScrollToTop()
+        }
     }
 
     // MARK: - Show / hide
@@ -119,6 +129,35 @@ public final class TrayPanelController: NSObject, NSWindowDelegate {
                 on: screen)
         }
         panel.makeKeyAndOrderFront(nil)
+        resetScrollToTop()
+    }
+
+    /// Reopening the panel must not restore the scroll offset it had when it
+    /// was dismissed: the panel is resized to the content while hidden, so a
+    /// stale offset shows up as a missing header plus an empty band at the
+    /// bottom. Runs on the next pass, after the content has laid out.
+    private func resetScrollToTop() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let scrollView = Self.firstScrollView(in: self.effectView)
+            else { return }
+            let clip = scrollView.contentView
+            let flipped = clip.documentView?.isFlipped ?? true
+            let top = flipped
+                ? 0
+                : (clip.documentView?.frame.height ?? 0) - clip.bounds.height
+            guard abs(clip.bounds.origin.y - top) > 0.5 else { return }
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: top))
+            scrollView.reflectScrolledClipView(clip)
+        }
+    }
+
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        for subview in view.subviews {
+            if let scrollView = subview as? NSScrollView { return scrollView }
+            if let found = firstScrollView(in: subview) { return found }
+        }
+        return nil
     }
 
     /// The screen whose menu-bar band actually contains the status-item
