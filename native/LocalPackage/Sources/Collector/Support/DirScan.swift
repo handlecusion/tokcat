@@ -25,9 +25,13 @@ struct DirEntryInfo: Equatable {
     var isRegular: Bool
     /// Data-fork length; 0 for non-regular entries.
     var size: UInt64
-    /// mtime in whole milliseconds; 0 for pre-epoch/unavailable, matching
-    /// `statMtimeMs`.
-    var mtimeMs: Int64
+    /// mtime in nanoseconds; 0 for pre-epoch/unavailable. Full precision
+    /// matters for the tailer's directory pruning: two changes inside the
+    /// same millisecond would otherwise look like none.
+    var mtimeNs: Int64
+
+    /// mtime in whole milliseconds, matching `statMtimeMs`.
+    var mtimeMs: Int64 { mtimeNs / 1_000_000 }
 }
 
 // vnode types from sys/vnode.h (not re-exported by the Darwin module).
@@ -129,10 +133,10 @@ private func decodeBulkEntries(
             offset += MemoryLayout<UInt32>.size
         }
 
-        var mtimeMs: Int64 = 0
+        var mtimeNs: Int64 = 0
         if returnedAttrs.commonattr & attrCmnModTime != 0 {
             let modified = entry.loadUnaligned(fromByteOffset: offset, as: timespec.self)
-            mtimeMs = timespecToMs(modified)
+            mtimeNs = timespecToNs(modified)
             offset += MemoryLayout<timespec>.size
         }
 
@@ -151,7 +155,7 @@ private func decodeBulkEntries(
                 // The kernel reports a data length for symlinks too (the
                 // target string); only a regular file's length is a size.
                 size: isRegular ? size : 0,
-                mtimeMs: mtimeMs))
+                mtimeNs: mtimeNs))
         }
 
         entry = entry.advanced(by: length)
@@ -180,13 +184,13 @@ private func scanDirectoryFallback(_ path: String) -> [DirEntryInfo] {
             isDir: mode == S_IFDIR,
             isRegular: mode == S_IFREG,
             size: mode == S_IFREG ? UInt64(max(sb.st_size, 0)) : 0,
-            mtimeMs: timespecToMs(sb.st_mtimespec)))
+            mtimeNs: timespecToNs(sb.st_mtimespec)))
     }
     return out
 }
 
-private func timespecToMs(_ ts: timespec) -> Int64 {
+private func timespecToNs(_ ts: timespec) -> Int64 {
     let seconds = Int64(ts.tv_sec)
     guard seconds >= 0 else { return 0 }
-    return seconds * 1000 + Int64(ts.tv_nsec) / 1_000_000
+    return seconds * 1_000_000_000 + Int64(ts.tv_nsec)
 }

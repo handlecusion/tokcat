@@ -18,6 +18,11 @@ let tailClientHermes = "hermes"
 let tailClientGrok = "grok"
 let eventWindowSecs: Int64 = 3600  // EVENT_WINDOW_SECS (:26)
 let coldScanLookbackSecs: Int64 = 6 * 3600  // COLD_SCAN_LOOKBACK_SECS (:27)
+/// A file touched this recently is re-stat'd on every tick even when its
+/// directory is pruned from the walk (see `tick`).
+let activeFileWindowSecs: Int64 = 600
+/// How often the walk ignores directory-mtime pruning and visits everything.
+public let defaultFullScanIntervalMs: Int64 = 60_000
 
 enum TailClientKind: Equatable, Sendable {
     case claude
@@ -109,10 +114,15 @@ struct HermesTailSnapshot: Equatable {
 public struct UsageTailerConfig: Sendable {
     public var simulatedHome: String?
     public var nowMs: (@Sendable () -> Int64)?
+    /// Interval between unpruned walks. `0` makes every tick a full walk,
+    /// which is what the pre-pruning tailer did.
+    public var fullScanIntervalMs: Int64
 
-    public init(simulatedHome: String? = nil, nowMs: (@Sendable () -> Int64)? = nil) {
+    public init(simulatedHome: String? = nil, nowMs: (@Sendable () -> Int64)? = nil,
+                fullScanIntervalMs: Int64 = defaultFullScanIntervalMs) {
         self.simulatedHome = simulatedHome
         self.nowMs = nowMs
+        self.fullScanIntervalMs = fullScanIntervalMs
     }
 }
 
@@ -122,6 +132,13 @@ public actor UsageTailer {
     private(set) var seen: [String: Int] = [:]
     private var cold = true
     private var hermesSnapshots: [String: HermesTailSnapshot] = [:]
+    /// Last mtime seen for each directory, keyed by path — the walk's pruning
+    /// signal. Nanoseconds, so two changes inside one millisecond can't cancel
+    /// out into "unchanged".
+    private var dirMtimes: [String: Int64] = [:]
+    /// Files recently written to, re-stat'd every tick regardless of pruning.
+    var activeFiles: [String: TailClientKind] = [:]  // internal for tests
+    private var lastFullScanMs: Int64 = 0
     private let config: UsageTailerConfig
 
     public init(config: UsageTailerConfig = UsageTailerConfig()) {
@@ -135,27 +152,54 @@ public actor UsageTailer {
     // MARK: - Tick (usage_tail.rs:123-210)
 
     /// Scan all roots for growth, appending events. Returns events added.
+    ///
+    /// Two tiers, because walking every session root on the machine every 5
+    /// seconds was the app's dominant energy cost:
+    ///
+    ///   - Every tick prunes the walk by directory mtime. A directory's mtime
+    ///     moves when an entry is created, removed or renamed inside it, and
+    ///     never when a file it already holds simply grows — so an unchanged
+    ///     mtime proves there are no NEW session files below, and the walk can
+    ///     skip that subtree. New files are still picked up within one tick.
+    ///   - Growth of files we already know about is covered by re-stat'ing the
+    ///     active set (anything touched in the last `activeFileWindowSecs`),
+    ///     which is a handful of files rather than thousands.
+    ///
+    /// The one case neither tier catches is a dormant file that starts growing
+    /// again — a resumed session idle for more than the active window. The
+    /// unpruned walk every `fullScanIntervalMs` is the backstop for it: the
+    /// growth is delayed, never lost, since `readGrowth` resumes from the
+    /// stored offset.
     @discardableResult
     public func tick() -> Int {
         var added = 0
         let isCold = cold
         cold = false
-        let coldCutoffMs = now() - coldScanLookbackSecs * 1000
+        let nowMs = now()
+        let coldCutoffMs = nowMs - coldScanLookbackSecs * 1000
 
         added += tickHermes(isCold: isCold)
+
+        let isFullScan = isCold || nowMs - lastFullScanMs >= config.fullScanIntervalMs
+        if isFullScan { lastFullScanMs = nowMs }
+        // Only needed to keep the active pass from re-reading a file the walk
+        // already handled, and the walk touches few files when it is pruned.
+        var walked: Set<String> = []
 
         for (root, client) in tailRoots() {
             var stack = [root]
             while let dir = stack.popLast() {
                 // One getattrlistbulk pass per directory instead of a
-                // listing plus an lstat per entry: this loop runs every 5s
-                // over every session file on the machine, and the syscall
-                // count was the app's dominant energy cost. Symlinks are
-                // still described as themselves, matching Rust's
+                // listing plus an lstat per entry. Symlinks are still
+                // described as themselves, matching Rust's
                 // DirEntry::file_type / DirEntry::metadata.
                 for entry in scanDirectory(dir) {
                     if entry.isDir {
-                        stack.append(joinPath(dir, entry.name))
+                        let subdir = joinPath(dir, entry.name)
+                        if isFullScan || dirMtimes[subdir] != entry.mtimeNs {
+                            stack.append(subdir)
+                        }
+                        dirMtimes[subdir] = entry.mtimeNs
                         continue
                     }
                     guard entry.isRegular else { continue }
@@ -171,51 +215,84 @@ public actor UsageTailer {
                         continue
                     }
                     let path = joinPath(dir, entry.name)
-                    let size = entry.size
-                    let mtimeMs = entry.mtimeMs
-                    let prev = files[path].map { ($0.offset, $0.mtimeMs) }
-
-                    if isCold, prev == nil, mtimeMs < coldCutoffMs {
-                        // Cold scan: stamp old files at EOF without reading
-                        // (usage_tail.rs:175-179).
-                        files[path] = .atEOF(size: size, mtimeMs: mtimeMs)
-                        continue
-                    }
-
-                    let startOffset = prev?.0 ?? 0
-                    if size == startOffset {
-                        // Preserve codex/grok thread state when only mtime
-                        // refreshes without growth (:183-193). The offset
-                        // already equals `size` here, so an unchanged mtime
-                        // means there is nothing to write back — and skipping
-                        // the write matters: this is the branch every dormant
-                        // session file takes on every tick.
-                        if let existing = files[path] {
-                            if existing.mtimeMs != mtimeMs {
-                                files[path]!.mtimeMs = mtimeMs
-                            }
-                        } else {
-                            files[path] = .atEOF(size: size, mtimeMs: mtimeMs)
-                        }
-                        continue
-                    }
-                    if size < startOffset {
-                        // Truncated / rotated log — drop threaded counters so
-                        // we re-baseline instead of treating a new smaller
-                        // total as a negative delta (:196-200).
-                        files[path] = nil
-                        added += readGrowth(path: path, client: client,
-                                            start: 0, end: size, mtimeMs: mtimeMs)
-                    } else {
-                        added += readGrowth(path: path, client: client,
-                                            start: startOffset, end: size, mtimeMs: mtimeMs)
-                    }
+                    if !isFullScan { walked.insert(path) }
+                    added += processFile(
+                        path: path, client: client, size: entry.size,
+                        mtimeMs: entry.mtimeMs, isCold: isCold,
+                        coldCutoffMs: coldCutoffMs, nowMs: nowMs)
                 }
+            }
+        }
+
+        if !isFullScan {
+            // Iterating the dictionary copies it, so processFile is free to
+            // add and drop entries as it goes.
+            for (path, client) in activeFiles where !walked.contains(path) {
+                var sb = stat()
+                guard lstat(path, &sb) == 0, (sb.st_mode & S_IFMT) == S_IFREG else {
+                    // Deleted or replaced by a non-file; the next full scan
+                    // rediscovers it if it comes back.
+                    activeFiles[path] = nil
+                    continue
+                }
+                added += processFile(
+                    path: path, client: client, size: UInt64(max(sb.st_size, 0)),
+                    mtimeMs: statMtimeMs(sb), isCold: false,
+                    coldCutoffMs: coldCutoffMs, nowMs: nowMs)
             }
         }
 
         trimEvents()
         return added
+    }
+
+    /// Fold one observed (size, mtime) into the tail state, reading whatever
+    /// the file grew by. Shared between the walk and the active-file pass.
+    private func processFile(
+        path: String, client: TailClientKind, size: UInt64, mtimeMs: Int64,
+        isCold: Bool, coldCutoffMs: Int64, nowMs: Int64
+    ) -> Int {
+        if nowMs - mtimeMs <= activeFileWindowSecs * 1000 {
+            activeFiles[path] = client
+        } else {
+            activeFiles[path] = nil
+        }
+
+        let prev = files[path].map { ($0.offset, $0.mtimeMs) }
+
+        if isCold, prev == nil, mtimeMs < coldCutoffMs {
+            // Cold scan: stamp old files at EOF without reading
+            // (usage_tail.rs:175-179).
+            files[path] = .atEOF(size: size, mtimeMs: mtimeMs)
+            return 0
+        }
+
+        let startOffset = prev?.0 ?? 0
+        if size == startOffset {
+            // Preserve codex/grok thread state when only mtime refreshes
+            // without growth (:183-193). The offset already equals `size`
+            // here, so an unchanged mtime means there is nothing to write
+            // back — and skipping the write matters: this is the branch every
+            // dormant session file takes on every tick.
+            if let existing = files[path] {
+                if existing.mtimeMs != mtimeMs {
+                    files[path]!.mtimeMs = mtimeMs
+                }
+            } else {
+                files[path] = .atEOF(size: size, mtimeMs: mtimeMs)
+            }
+            return 0
+        }
+        if size < startOffset {
+            // Truncated / rotated log — drop threaded counters so we
+            // re-baseline instead of treating a new smaller total as a
+            // negative delta (:196-200).
+            files[path] = nil
+            return readGrowth(path: path, client: client,
+                              start: 0, end: size, mtimeMs: mtimeMs)
+        }
+        return readGrowth(path: path, client: client,
+                          start: startOffset, end: size, mtimeMs: mtimeMs)
     }
 
     // MARK: - Growth reads (usage_tail.rs:212-294)
@@ -724,3 +801,10 @@ func sidechainLabelFromPath(_ path: String) -> String {
     return "subagent:\(stem)"
 }
 
+private func statMtimeMs(_ sb: stat) -> Int64 {
+    // system_time_to_ms returns 0 for pre-epoch/errored mtimes.
+    let sec = Int64(sb.st_mtimespec.tv_sec)
+    let nsec = Int64(sb.st_mtimespec.tv_nsec)
+    if sec < 0 { return 0 }
+    return sec * 1000 + nsec / 1_000_000
+}

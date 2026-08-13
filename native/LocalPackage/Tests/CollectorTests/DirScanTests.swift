@@ -61,6 +61,7 @@ struct DirScanTests {
 
         let entry = scanDirectory(dir.path).first { $0.name == "s.jsonl" }
         #expect(entry?.mtimeMs == 1_700_000_000_000)
+        #expect(entry?.mtimeNs == 1_700_000_000_000_000_000)
     }
 
     // Growth must be visible on the very next scan — this is the signal the
