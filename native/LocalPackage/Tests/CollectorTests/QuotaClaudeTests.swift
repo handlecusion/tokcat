@@ -25,9 +25,10 @@ private func date(_ epochSeconds: Int64) -> Date {
                 }
             }
             """
+        // A blob carrying a refreshToken still parses; the token itself is not
+        // lifted into ClaudeCredentials, which has no field for it (#55).
         let credentials = try ClaudeQuotaProvider.parseClaudeCredentialsData(raw)
         #expect(credentials.accessToken == "access")
-        #expect(credentials.refreshToken == "refresh")
         #expect(credentials.scopes == ["user:profile"])
         #expect(credentials.subscriptionType == "pro")
         #expect(credentials.expiresAt == date(1_700_000_000))
@@ -45,7 +46,7 @@ private func date(_ epochSeconds: Int64) -> Date {
 
     @Test func expiryComparesAgainstNow() {
         let credentials = ClaudeCredentials(
-            accessToken: "a", refreshToken: nil,
+            accessToken: "a",
             expiresAt: date(1_700_000_000), scopes: [],
             rateLimitTier: nil, subscriptionType: nil)
         #expect(ClaudeQuotaProvider.claudeCredentialsExpired(
@@ -56,6 +57,71 @@ private func date(_ epochSeconds: Int64) -> Date {
         noExpiry.expiresAt = nil
         #expect(!ClaudeQuotaProvider.claudeCredentialsExpired(
             noExpiry, now: date(1_800_000_000)))
+    }
+
+    /// An expired token must be reported, never renewed: redeeming the refresh
+    /// token rotates it server-side and Tokcat cannot write the replacement
+    /// back into the Keychain, which would log Claude Code out (#55).
+    ///
+    /// The message is asserted verbatim because it is the whole remedy the
+    /// user gets: it has to send them to `claude` to refresh, and must not
+    /// imply the login is gone and needs re-authenticating.
+    @Test func expiredCredentialsAreReportedNotRefreshed() {
+        let expired = ClaudeCredentials(
+            accessToken: "a",
+            expiresAt: date(1_700_000_000), scopes: ["user:profile"],
+            rateLimitTier: nil, subscriptionType: nil)
+        let error = #expect(throws: QuotaError.self) {
+            try ClaudeQuotaProvider.validateCredentials(
+                expired, now: date(1_700_000_001))
+        }
+        #expect(error?.message == "Claude access token expired. Run `claude` to refresh it.")
+    }
+
+    /// Expiry is checked before scopes, so a credential that is both expired
+    /// and under-scoped reports the expiry — the actionable one, since running
+    /// `claude` is what refreshes it.
+    @Test func expiryIsReportedBeforeScope() {
+        let credentials = ClaudeCredentials(
+            accessToken: "a",
+            expiresAt: date(1_700_000_000), scopes: ["user:inference"],
+            rateLimitTier: nil, subscriptionType: nil)
+        let error = #expect(throws: QuotaError.self) {
+            try ClaudeQuotaProvider.validateCredentials(
+                credentials, now: date(1_700_000_001))
+        }
+        #expect(error?.message == "Claude access token expired. Run `claude` to refresh it.")
+    }
+
+    @Test func validateAcceptsLiveCredentials() throws {
+        let live = ClaudeCredentials(
+            accessToken: "a",
+            expiresAt: date(1_700_000_000), scopes: ["user:profile"],
+            rateLimitTier: nil, subscriptionType: nil)
+        try ClaudeQuotaProvider.validateCredentials(live, now: date(1_699_999_999))
+
+        // No expiry recorded is not treated as expired.
+        var noExpiry = live
+        noExpiry.expiresAt = nil
+        try ClaudeQuotaProvider.validateCredentials(noExpiry, now: date(1_800_000_000))
+
+        // Scopes are only enforced when the credential actually lists them.
+        var noScopes = live
+        noScopes.scopes = []
+        try ClaudeQuotaProvider.validateCredentials(noScopes, now: date(1_699_999_999))
+    }
+
+    @Test func validateRejectsMissingProfileScope() {
+        let credentials = ClaudeCredentials(
+            accessToken: "a",
+            expiresAt: nil, scopes: ["user:inference"],
+            rateLimitTier: nil, subscriptionType: nil)
+        let error = #expect(throws: QuotaError.self) {
+            try ClaudeQuotaProvider.validateCredentials(
+                credentials, now: date(1_700_000_000))
+        }
+        #expect(error?.message == "Claude OAuth token lacks the user:profile scope. "
+            + "Run `claude logout && claude login`.")
     }
 
     @Test func mapsOAuthWindows() {

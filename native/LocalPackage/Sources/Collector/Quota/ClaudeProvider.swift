@@ -3,15 +3,29 @@ import Foundation
 
 // Port of the Claude OAuth quota provider in agent_usage.rs
 // (:659-742, 786-863, 957-995, 1057-1100, 1192-1315, 2209-2236).
+//
+// One deliberate divergence from that port: the Rust code refreshed an expired
+// Claude access token, and this no longer does. See `ClaudeCredentials` (#55).
 
 private let claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
-private let claudeRefreshURL = "https://platform.claude.com/v1/oauth/token"
-private let claudeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 private let claudeKeychainService = "Claude Code-credentials"
 
+/// Tokcat reads the Claude credential but never renews it.
+///
+/// Redeeming the refresh token rotates it server-side, and Tokcat has no way
+/// to write the replacement back: the credential lives in the login Keychain,
+/// which Claude Code owns and updates under its own locking. A refresh here
+/// would leave the stored credential pointing at a token that has already been
+/// spent, and the next refresh Claude Code performs would be rejected —
+/// silently logging the user out (#55).
+///
+/// So `refreshToken` is deliberately absent from this type. An expired access
+/// token is surfaced as an error telling the user to run `claude`, which is the
+/// process that owns the token lifecycle. Codex is different (its credential is
+/// a plain file this app can rewrite), which is why `CodexProvider` refreshes
+/// and `saveCodexCredentials` persists.
 struct ClaudeCredentials {
     var accessToken: String
-    var refreshToken: String?
     var expiresAt: Date?
     var scopes: [String]
     var rateLimitTier: String?
@@ -198,15 +212,8 @@ public enum ClaudeQuotaProvider {
     }
 
     static func fetchInner() async throws -> AgentUsageSnapshot {
-        var credentials = try loadClaudeCredentials()
-        if claudeCredentialsExpired(credentials) {
-            credentials = try await refreshClaudeCredentials(credentials)
-        }
-
-        if !credentials.scopes.isEmpty && !credentials.scopes.contains("user:profile") {
-            throw QuotaError(
-                "Claude OAuth token lacks the user:profile scope. Run `claude logout && claude login`.")
-        }
+        let credentials = try loadClaudeCredentials()
+        try validateCredentials(credentials)
 
         var request = URLRequest(url: URL(string: claudeUsageURL)!)
         request.timeoutInterval = 30
@@ -317,7 +324,7 @@ public enum ClaudeQuotaProvider {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return ClaudeCredentials(
-            accessToken: accessToken, refreshToken: nil, expiresAt: nil,
+            accessToken: accessToken, expiresAt: nil,
             scopes: scopes, rateLimitTier: nil, subscriptionType: nil)
     }
 
@@ -382,11 +389,10 @@ public enum ClaudeQuotaProvider {
         } else {
             scopes = []
         }
+        // `refreshToken` is intentionally not read out of the blob: nothing in
+        // this app may redeem it. See the note on `ClaudeCredentials`.
         return ClaudeCredentials(
             accessToken: accessToken,
-            refreshToken: oauth["refreshToken"]?.asString
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .flatMap { $0.isEmpty ? nil : $0 },
             expiresAt: expiresAt,
             scopes: scopes,
             rateLimitTier: oauth["rateLimitTier"]?.asString,
@@ -399,50 +405,22 @@ public enum ClaudeQuotaProvider {
         return now >= expiresAt
     }
 
-    /// Refreshed credentials are NOT persisted (mirror: the Rust code never
-    /// writes Claude credentials back anywhere).
-    static func refreshClaudeCredentials(
-        _ credentials: ClaudeCredentials
-    ) async throws -> ClaudeCredentials {
-        guard let refreshToken = credentials.refreshToken else {
+    /// Checks that run before the usage request. Split out of `fetchInner` so
+    /// they are testable without a network round-trip.
+    ///
+    /// An expired token is reported rather than renewed — see the note on
+    /// `ClaudeCredentials`. `claude` is the process that owns the refresh, so
+    /// pointing the user at it is both the fix and the only safe action.
+    static func validateCredentials(_ credentials: ClaudeCredentials,
+                                    now: Date = Date()) throws {
+        if claudeCredentialsExpired(credentials, now: now) {
             throw QuotaError(
-                "Claude OAuth token is expired and has no refresh token. Run `claude`.")
+                "Claude access token expired. Run `claude` to refresh it.")
         }
-        var request = URLRequest(url: URL(string: claudeRefreshURL)!)
-        request.timeoutInterval = 30
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken,
-            "client_id": claudeClientID,
-        ])
-
-        let status: Int
-        let body: Data
-        do {
-            (status, body) = try await QuotaHTTP.send(request)
-        } catch {
-            throw QuotaError("Claude OAuth refresh failed: \(error.localizedDescription)")
+        if !credentials.scopes.isEmpty && !credentials.scopes.contains("user:profile") {
+            throw QuotaError(
+                "Claude OAuth token lacks the user:profile scope. Run `claude logout && claude login`.")
         }
-        if !(200..<300).contains(status) {
-            throw QuotaError("Claude OAuth refresh failed. Run `claude` to re-authenticate.")
-        }
-        guard
-            let json = JSONValue.parse(body),
-            let accessToken = json["access_token"]?.asString,
-            let expiresIn = json["expires_in"]?.asInt64
-        else {
-            throw QuotaError("decode Claude refresh response: missing fields")
-        }
-        return ClaudeCredentials(
-            accessToken: accessToken,
-            refreshToken: json["refresh_token"]?.asString ?? credentials.refreshToken,
-            expiresAt: Date().addingTimeInterval(TimeInterval(expiresIn)),
-            scopes: credentials.scopes,
-            rateLimitTier: credentials.rateLimitTier,
-            subscriptionType: credentials.subscriptionType)
     }
 
     /// `claude_user_agent`: `claude --version` through the subprocess guard,

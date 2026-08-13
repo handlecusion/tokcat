@@ -37,6 +37,17 @@ public final class QuotaStore: ObservableObject {
     @Published public private(set) var cursorUsageError: String?
 
     private var autoRefreshTask: Task<Void, Never>?
+    /// Set when the user asks for a refresh while one is already running.
+    /// Drained by `refresh()` rather than starting a second concurrent pass,
+    /// so repeated presses collapse into a single extra fetch.
+    var pendingUserRefresh = false
+
+    /// The provider fan-out, injectable so the refresh state machine can be
+    /// tested without four upstream calls. Production never replaces it; it
+    /// is not public, so nothing outside this module can.
+    var runProviders: @Sendable () async -> AgentUsagePayload = {
+        await AgentQuota.run()
+    }
 
     public init() {}
 
@@ -70,17 +81,49 @@ public final class QuotaStore: ObservableObject {
     // MARK: - Refresh
 
     /// Run the four providers concurrently off-main and publish the result.
+    ///
+    /// Best-effort: a call while a fetch is in flight is dropped, which is
+    /// what the automatic callers want. Use `refreshNow()` for a press the
+    /// user is waiting on.
     public func refresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
+        let run = runProviders
         Task { [weak self] in
-            let payload = await Task.detached(priority: .utility) {
-                await AgentQuota.run()
-            }.value
-            guard let self else { return }
-            self.apply(payload)
-            self.isRefreshing = false
+            while true {
+                let payload = await Task.detached(priority: .utility) {
+                    await run()
+                }.value
+                guard let self else { return }
+                self.apply(payload)
+                // A press that landed mid-fetch was answered with a payload
+                // gathered before it, so run once more rather than reporting
+                // the stale result as the response to it. isRefreshing stays
+                // true across the hand-off, so the spinner does not blink.
+                if self.pendingUserRefresh {
+                    self.pendingUserRefresh = false
+                    continue
+                }
+                self.isRefreshing = false
+                return
+            }
         }
+    }
+
+    /// Refresh on explicit user action — the header button, the Refresh Now
+    /// menu item, and ⌘R.
+    ///
+    /// Never dropped, unlike `refresh()`. An in-flight fetch may have read
+    /// its credentials before the user fixed them (running `claude` after an
+    /// expired-token error is exactly this case), so answering the press with
+    /// that fetch's result would strand the error on screen until the next
+    /// 30-minute tick.
+    public func refreshNow() {
+        guard isRefreshing else {
+            refresh()
+            return
+        }
+        pendingUserRefresh = true
     }
 
     /// Popover-open top-up: only re-fetch when the snapshot is older than
