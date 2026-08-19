@@ -11,11 +11,14 @@ import Foundation
 //               graph parser scans — Orca runtime homes, TOKCAT_CODEX_HOMES)
 // Hermes:       ~/.hermes/state.db (SQLite aggregates, diffed per tick)
 // Grok Build:   $GROK_HOME/sessions/**/updates.jsonl
+// oh-my-pi:     ~/.omp/agent/sessions/**/*.jsonl (subagent transcripts are
+//               nested one level deeper, inside the parent session's dir)
 
 let tailClientClaude = "claude-code"
 let tailClientCodex = "codex-cli"
 let tailClientHermes = "hermes"
 let tailClientGrok = "grok"
+let tailClientOmp = "omp"
 let eventWindowSecs: Int64 = 3600  // EVENT_WINDOW_SECS (:26)
 let coldScanLookbackSecs: Int64 = 6 * 3600  // COLD_SCAN_LOOKBACK_SECS (:27)
 /// A file touched this recently is re-stat'd on every tick even when its
@@ -28,6 +31,7 @@ enum TailClientKind: Equatable, Sendable {
     case claude
     case codex
     case grok
+    case omp
 }
 
 /// One usage delta in the live event ring (usage_tail.rs:36-52).
@@ -339,6 +343,8 @@ public actor UsageTailer {
                 recorded = parseGrokLine(raw: trimmed, lastTotal: &grokLastTotal,
                                          currentModel: &grokModel,
                                          emitFirstAsDelta: grokEmitFirst)
+            case .omp:
+                recorded = parseOmpLine(path: path, raw: trimmed)
             }
             if recorded { added += 1 }
             consumed += UInt64(chunk.count)
@@ -477,6 +483,38 @@ public actor UsageTailer {
             UsageEvent(tsMs: tsMs, client: tailClientGrok, agent: "main", model: model,
                        input: delta, output: 0, cacheRead: 0, cacheWrite: 0),
             dedupKey: "")
+    }
+
+    // MARK: - oh-my-pi lines
+
+    /// omp session entries (omp://session.md). Every assistant `message`
+    /// carries the usage of exactly one API response — per-call values, not a
+    /// running total — so each line is emitted as-is with no threaded state.
+    private func parseOmpLine(path: String, raw: [UInt8]) -> Bool {
+        guard let value = JSONValue.parse(Data(raw)) else { return false }
+        guard value["type"]?.asString == "message" else { return false }
+        guard let message = value["message"] else { return false }
+        guard message["role"]?.asString == "assistant" else { return false }
+        guard let usage = message["usage"] else { return false }
+
+        let input = strictI64(usage["input"]) ?? 0
+        let output = strictI64(usage["output"]) ?? 0
+        let cacheRead = strictI64(usage["cacheRead"]) ?? 0
+        let cacheWrite = strictI64(usage["cacheWrite"]) ?? 0
+        if input + output + cacheRead + cacheWrite <= 0 { return false }
+
+        let model = tailNormalizeModel(message["model"]?.asString ?? "unknown")
+        let tsMs =
+            strictI64(message["timestamp"]).map(normalizeEpochMs)
+            ?? value["timestamp"]?.asString.flatMap(rfc3339ToTimestampMs)
+            ?? now()
+        let responseId = message["responseId"]?.asString ?? ""
+
+        return pushEvent(
+            UsageEvent(tsMs: tsMs, client: tailClientOmp, agent: ompTailAgent(path),
+                       model: model, input: input, output: output,
+                       cacheRead: cacheRead, cacheWrite: cacheWrite),
+            dedupKey: responseId.isEmpty ? "" : "omp:\(responseId)")
     }
 
     // MARK: - Hermes (usage_tail.rs:543-634)
@@ -620,6 +658,8 @@ public actor UsageTailer {
             if isDirectory(codex) { out.append((codex, .codex)) }
             let grok = joinPath(joinPath(sim, ".grok"), "sessions")
             if isDirectory(grok) { out.append((grok, .grok)) }
+            let omp = joinPath(joinPath(joinPath(sim, ".omp"), "agent"), "sessions")
+            if isDirectory(omp) { out.append((omp, .omp)) }
             return out
         }
 
@@ -645,6 +685,12 @@ public actor UsageTailer {
         }
         if let grok = tailGrokSessionsRoot() {
             out.append((grok, .grok))
+        }
+        // oh-my-pi: the same agent dirs the graph parser scans.
+        var seenOmpRoots = Set<String>()
+        for root in ompSessionRoots() {
+            guard seenOmpRoots.insert(root).inserted else { continue }
+            if isDirectory(root) { out.append((root, .omp)) }
         }
         return out
     }
@@ -672,6 +718,15 @@ private func tailGrokSessionsRoot() -> String? {
     guard let home = homeDir() else { return nil }
     let p = joinPath(joinPath(home, ".grok"), "sessions")
     return isDirectory(p) ? p : nil
+}
+
+/// omp subagent transcripts live inside their parent session's directory and
+/// are named after the agent (`<session-id>/Scout.jsonl`); the main
+/// transcript is the sibling `<session-id>.jsonl`.
+func ompTailAgent(_ path: String) -> String {
+    let parent = (path as NSString).deletingLastPathComponent
+    guard let bucket = rustFileName(parent), ompIsSessionDirName(bucket) else { return "main" }
+    return "subagent:\(rustFileStem(path) ?? "unknown")"
 }
 
 // MARK: - Grok extractors (usage_tail.rs:775-836)
