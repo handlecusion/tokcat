@@ -504,10 +504,19 @@ public actor UsageTailer {
         if input + output + cacheRead + cacheWrite <= 0 { return false }
 
         let model = tailNormalizeModel(message["model"]?.asString ?? "unknown")
-        let tsMs =
-            strictI64(message["timestamp"]).map(normalizeEpochMs)
-            ?? value["timestamp"]?.asString.flatMap(rfc3339ToTimestampMs)
-            ?? now()
+        // Spelled out rather than chained through `map`/`??`: the autoclosure
+        // operands captured `value` alongside the actor-isolated `now()`, which
+        // the Release-configuration concurrency checker rejects as a send.
+        let tsMs: Int64
+        if let epochMs = strictI64(message["timestamp"]) {
+            tsMs = normalizeEpochMs(epochMs)
+        } else if let iso = value["timestamp"]?.asString,
+            let parsed = rfc3339ToTimestampMs(iso)
+        {
+            tsMs = parsed
+        } else {
+            tsMs = now()
+        }
         let responseId = message["responseId"]?.asString ?? ""
 
         return pushEvent(
