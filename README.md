@@ -22,7 +22,7 @@
 
 You spent **$2,513.67** on AI coding tools in the last four months. You don't know that, because you can't see it.
 
-**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. It is a **native Swift app** (SwiftUI + AppKit, SceneKit for the 3D graph) with no web view and no bundled runtime: Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no Tokcat account — and surfaces **10 AI coding clients** (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build) in an Overview dashboard plus per-client tabs. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, plan usage percent, or icon-only mode; clicking opens a frosted-glass popover with 2D stacked token bars, an interactive 3D contribution graph, OAuth agent-limit cards, Live session throughput, streak summaries, theme selection, and settings. Tokcat rebuilds local usage data in-process every **30 minutes**, checks for **Sparkle**-signed updates on launch and hourly, and ships as one **universal DMG** for **Apple Silicon and Intel Macs, macOS 13+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
+**Tokcat** is an **AI token usage monitor for the macOS menu bar** — a local-first **Claude Code usage**, **Codex usage**, **Cursor usage**, and **LLM cost tracker** for AI coding agent usage. It is a **native Swift app** (SwiftUI + AppKit, SceneKit for the 3D graph) with no web view and no bundled runtime: Tokcat sits in the macOS menu bar — no Dock icon, no telemetry, no Tokcat account — and surfaces **11 AI coding clients** (Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi) in an Overview dashboard plus per-client tabs. The menu-bar title can show today's tokens, today's cost, totals, live tokens/min, plan usage percent, or icon-only mode; clicking opens a frosted-glass popover with 2D stacked token bars, an interactive 3D contribution graph, OAuth agent-limit cards, Live session throughput, streak summaries, theme selection, and settings. Tokcat rebuilds local usage data in-process every **30 minutes**, checks for **Sparkle**-signed updates on launch and hourly, and ships as one **universal DMG** for **Apple Silicon and Intel Macs, macOS 13+**. Install: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="Cat spinning next to today's cost in the menu bar" width="240" />
@@ -62,7 +62,7 @@ Tokcat is built for the category searches people actually type when AI coding bi
 - **Claude Code usage** tracker for local session logs
 - **OpenAI Codex usage** and **Codex cost** tracker
 - **Cursor usage** and **Cursor AI token** dashboard
-- **LLM cost tracker** for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, and Grok Build
+- **LLM cost tracker** for AI coding agent usage across Claude Code, Codex CLI, Cursor IDE, Copilot CLI, Gemini CLI, OpenCode, Amp, Droid, Hermes, Grok Build, and Oh My Pi
 - **AI coding dashboard** with Overview/client tabs, agent limits, live token velocity, streaks, and daily totals
 - **GitHub-style 3D contribution graph** plus a recent 30-day stacked token chart
 
@@ -76,7 +76,7 @@ Tokcat is built for the category searches people actually type when AI coding bi
 | **Native** | Swift and SwiftUI end to end — `NSVisualEffectView` vibrancy, system fonts, SceneKit for the 3D graph, and light/dark adaptation from the system appearance. No web view, no JavaScript runtime. |
 | **Quiet** | Lives in the menu bar — no Dock icon, no spurious notifications, auto-hides when you click another app. |
 | **Honest** | Usage history comes from local session logs read on-device. No telemetry, no analytics, no cloud sync, no Tokcat account. |
-| **Multi-client** | Tokcat reads Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build logs. |
+| **Multi-client** | Tokcat reads Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi logs. |
 | **Cat** | The menubar cat eats your tokens and spins faster the more it digests — your token throughput as a single, glanceable critter. |
 
 ---
@@ -132,7 +132,7 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 | Feature | Details |
 |---------|---------|
 | **2D / 3D usage views** | Recent 30-day stacked token bars or interactive full-year 3D tile graph with orbit controls, persistent camera, and auto-fit-to-active-tiles framing. |
-| **Overview + client tabs** | Switch between all-client totals and dedicated tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build when data is present. |
+| **Overview + client tabs** | Switch between all-client totals and dedicated tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi when data is present. |
 | **Agent limits** | Codex, Claude, Grok Build, and Cursor quota cards show session, weekly, monthly, credits, model, reset, and remaining-limit windows when local credentials are available. Cursor shows one row per billing-period model pool (Cursor Models, Other Models), matching its own Plan & Usage page. Quotas are re-fetched on launch, every 30 minutes after that, when the popover opens on a snapshot older than a minute, and on demand from Refresh Now. |
 | **Live menu-bar title** | Today's tokens, today's cost, total tokens, total cost, live tokens/min, plan usage percent, or icon-only. The live signal re-ticks every 5 seconds. |
 | **Plan usage in the menu bar** | Show a single "% used" or "% left" number from Claude, Codex, Grok, or Cursor — or leave it on Auto, which tracks whichever window is closest to its cap. |
@@ -238,7 +238,7 @@ Tokcat 0.2.0 and later require macOS 13 (Ventura). On macOS 11 or 12, stay on `v
 
 ### What is Tokcat?
 
-Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Written in Swift and SwiftUI, it reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a universal DMG from GitHub Releases, and runs on Apple Silicon and Intel Macs with macOS 13 or newer.
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Written in Swift and SwiftUI, it reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a universal DMG from GitHub Releases, and runs on Apple Silicon and Intel Macs with macOS 13 or newer.
 
 ### How much does Tokcat cost?
 
@@ -246,7 +246,7 @@ Tokcat is free and open-source under the MIT licence. There is no subscription, 
 
 ### Which AI coding tools does Tokcat track?
 
-Tokcat tracks **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build** from local logs. New client formats are added as parsers in Tokcat's Swift `Collector` module.
+Tokcat tracks **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi** from local logs. New client formats are added as parsers in Tokcat's Swift `Collector` module.
 
 ### Does Tokcat send my data anywhere?
 

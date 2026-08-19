@@ -22,7 +22,7 @@
 
 지난 4개월 동안 AI 코딩 도구에 **$2,513.67** 을 썼습니다. 그런데 모르고 있죠 — 볼 수 있는 곳이 없으니까.
 
-**Tokcat**은 AI 코딩 토큰 사용량을 메뉴바에서 바로 볼 수 있게 해주는 네이티브 macOS 앱입니다. **Swift와 SwiftUI**로 작성됐고(3D 그래프는 SceneKit), 웹뷰도 번들 런타임도 없습니다. Dock 아이콘 없이 메뉴바에 상주하면서 텔레메트리·Tokcat 계정·클라우드 동기화 없이 동작합니다. **10종 AI 코딩 클라이언트**(Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build)를 Overview 대시보드와 클라이언트별 탭으로 보여주고, 메뉴바 고양이는 오늘의 토큰, 오늘의 비용, 전체 토큰/비용, live tokens/min, 플랜 사용률(%) 또는 아이콘만 표시할 수 있습니다. 클릭 시 macOS 비브런시(frosted glass) popover가 열려 2D 누적 토큰 차트, 3D 컨트리뷰션 그래프, OAuth agent limit, Live session, 스트릭 요약, 테마 선택, 설정 패널을 제공합니다. Tokcat은 로컬 사용량 로그를 앱 안에서 **30분**마다 다시 읽고, 업데이트는 **Sparkle**로 실행 시 + 1시간마다 확인합니다. 배포는 **Apple Silicon과 Intel Mac을 함께 담은 universal DMG**(macOS 13+)입니다. 설치: `brew install --cask handlecusion/tokcat/tokcat`.
+**Tokcat**은 AI 코딩 토큰 사용량을 메뉴바에서 바로 볼 수 있게 해주는 네이티브 macOS 앱입니다. **Swift와 SwiftUI**로 작성됐고(3D 그래프는 SceneKit), 웹뷰도 번들 런타임도 없습니다. Dock 아이콘 없이 메뉴바에 상주하면서 텔레메트리·Tokcat 계정·클라우드 동기화 없이 동작합니다. **11종 AI 코딩 클라이언트**(Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi)를 Overview 대시보드와 클라이언트별 탭으로 보여주고, 메뉴바 고양이는 오늘의 토큰, 오늘의 비용, 전체 토큰/비용, live tokens/min, 플랜 사용률(%) 또는 아이콘만 표시할 수 있습니다. 클릭 시 macOS 비브런시(frosted glass) popover가 열려 2D 누적 토큰 차트, 3D 컨트리뷰션 그래프, OAuth agent limit, Live session, 스트릭 요약, 테마 선택, 설정 패널을 제공합니다. Tokcat은 로컬 사용량 로그를 앱 안에서 **30분**마다 다시 읽고, 업데이트는 **Sparkle**로 실행 시 + 1시간마다 확인합니다. 배포는 **Apple Silicon과 Intel Mac을 함께 담은 universal DMG**(macOS 13+)입니다. 설치: `brew install --cask handlecusion/tokcat/tokcat`.
 
 <p align="center">
   <img src="docs/screenshots/menubar-cat2.gif" alt="메뉴바에서 오늘의 비용 옆에 회전하는 고양이" width="240" />
@@ -62,7 +62,7 @@ brew install --cask handlecusion/tokcat/tokcat
 | **네이티브** | 전부 Swift + SwiftUI. macOS `NSVisualEffectView` 비브런시, 시스템 폰트, 3D 그래프는 SceneKit, 라이트/다크는 시스템 설정을 따름. 웹뷰도 JS 런타임도 없음. |
 | **조용함** | 메뉴바에만 상주 — Dock 아이콘 없음, 잡 알림 없음, 다른 앱 클릭 시 자동 hide. |
 | **정직함** | 사용량 히스토리는 로컬 세션 로그를 기기 안에서 읽어 산출. 텔레메트리·분석·클라우드 동기화·Tokcat 계정 없음. |
-| **다중 클라이언트** | Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build 로그 지원. |
+| **다중 클라이언트** | Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 로그 지원. |
 | **고양이** | 메뉴바 고양이가 당신의 토큰을 받아먹고 더 많이 소화할수록 빠르게 회전합니다 — 한 마리 생물로 표현된 토큰 처리량. |
 
 ---
@@ -114,7 +114,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 | 기능 | 설명 |
 |------|------|
 | **2D / 3D 사용량 보기** | 최근 30일 누적 토큰 차트 또는 full-year 3D 타일 그래프. orbit 컨트롤, 카메라 상태 저장, active 타일 자동 fit. |
-| **Overview + 클라이언트 탭** | 데이터가 있는 Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build 탭으로 전환. |
+| **Overview + 클라이언트 탭** | 데이터가 있는 Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 탭으로 전환. |
 | **Agent limits** | 로컬 credential이 있으면 Codex/Claude/Grok/Cursor의 session, weekly, monthly, credits, model, reset, remaining limit window 표시. Cursor는 청구 주기의 모델 풀별(Cursor Models, Other Models)로 한 줄씩 보여주며, Cursor 자체 Plan & Usage 화면과 동일한 수치입니다. 한도 값은 실행 시, 이후 30분마다, 팝오버를 열었을 때 값이 1분 이상 지났으면, 그리고 Refresh Now를 누를 때 다시 조회합니다. |
 | **라이브 메뉴바 타이틀** | 오늘의 토큰 / 오늘의 비용 / 전체 토큰 / 전체 비용 / tokens per min / 플랜 사용률 / 아이콘만. 라이브 신호는 5초마다 다시 계산됩니다. |
 | **메뉴바 플랜 사용률** | Claude, Codex, Grok, Cursor 중 하나의 "% used" 또는 "% left"를 숫자 하나로 표시. Auto로 두면 cap에 가장 가까운 window를 따라갑니다. |
@@ -194,7 +194,7 @@ Cursor는 예외입니다. Settings → Cursor usage → Fetch from cursor.com�
 
 ### Tokcat이 뭔가요?
 
-Tokcat은 AI 코딩 도구의 토큰 사용량을 2D 누적 차트와 3D GitHub 스타일 컨트리뷰션 그래프로 시각화해주는 무료 오픈소스 macOS 메뉴바 앱입니다. Swift와 SwiftUI로 작성됐고, Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build 세션을 로컬 로그에서 읽어 한 화면에 보여줍니다. 분석 요청을 보내지 않고, Tokcat 계정도 필요 없습니다. MIT 라이선스로 공개되어 있으며, Homebrew(`brew install --cask handlecusion/tokcat/tokcat`) 또는 GitHub Releases의 universal DMG로 배포됩니다. **Apple Silicon 및 Intel Mac, macOS 13 이상** 대상입니다.
+Tokcat은 AI 코딩 도구의 토큰 사용량을 2D 누적 차트와 3D GitHub 스타일 컨트리뷰션 그래프로 시각화해주는 무료 오픈소스 macOS 메뉴바 앱입니다. Swift와 SwiftUI로 작성됐고, Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 세션을 로컬 로그에서 읽어 한 화면에 보여줍니다. 분석 요청을 보내지 않고, Tokcat 계정도 필요 없습니다. MIT 라이선스로 공개되어 있으며, Homebrew(`brew install --cask handlecusion/tokcat/tokcat`) 또는 GitHub Releases의 universal DMG로 배포됩니다. **Apple Silicon 및 Intel Mac, macOS 13 이상** 대상입니다.
 
 ### 비용이 얼마인가요?
 
@@ -202,7 +202,7 @@ Tokcat은 MIT 라이선스 무료 오픈소스입니다. 구독, 유료 등급, 
 
 ### 어떤 AI 코딩 도구를 추적하나요?
 
-로컬 로그 기준으로 **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build**를 추적합니다. 새 클라이언트 포맷은 Swift `Collector` 모듈에 파서로 추가됩니다.
+로컬 로그 기준으로 **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi**를 추적합니다. 새 클라이언트 포맷은 Swift `Collector` 모듈에 파서로 추가됩니다.
 
 ### Tokcat은 제 데이터를 어디로 보내나요?
 

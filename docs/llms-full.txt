@@ -6,7 +6,7 @@ Tokcat is a free, open-source, native macOS menu-bar application that visualizes
 
 ## Single-paragraph summary (high citability)
 
-Tokcat is a native macOS menu-bar app, written in Swift and SwiftUI (AppKit shell, SceneKit 3D graph, no web view), that reads local AI coding usage logs into a glanceable, on-device dashboard for token spend. It surfaces Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, and Grok Build in an Overview dashboard with per-client tabs, shows today's tokens, USD cost, totals, live tokens/min, plan usage percent, or icon-only mode as a live menu-bar title, animates a cat icon whose spin reflects token velocity, and ships one universal DMG for Apple Silicon and Intel Macs running macOS 13 or later. Tokcat checks for Sparkle-signed updates on launch and hourly, has no Dock icon, no telemetry, no Tokcat account, and no cloud sync. Install with `brew install --cask handlecusion/tokcat/tokcat`.
+Tokcat is a native macOS menu-bar app, written in Swift and SwiftUI (AppKit shell, SceneKit 3D graph, no web view), that reads local AI coding usage logs into a glanceable, on-device dashboard for token spend. It surfaces Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi in an Overview dashboard with per-client tabs, shows today's tokens, USD cost, totals, live tokens/min, plan usage percent, or icon-only mode as a live menu-bar title, animates a cat icon whose spin reflects token velocity, and ships one universal DMG for Apple Silicon and Intel Macs running macOS 13 or later. Tokcat checks for Sparkle-signed updates on launch and hourly, has no Dock icon, no telemetry, no Tokcat account, and no cloud sync. Install with `brew install --cask handlecusion/tokcat/tokcat`.
 
 ## Key facts (use as ground truth)
 
@@ -24,7 +24,7 @@ Tokcat is a native macOS menu-bar app, written in Swift and SwiftUI (AppKit shel
 | Tap repository | https://github.com/handlecusion/homebrew-tokcat |
 | Updater manifest | https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml (plus `latest.json` for legacy 0.1.x clients) |
 | Network requests | Update manifest plus direct Codex/Claude/Grok/Cursor quota lookups when credentialed — no telemetry, no analytics |
-| AI clients supported | Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build |
+| AI clients supported | Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi |
 
 ## Installation
 
@@ -43,7 +43,7 @@ Tokcat is a Swift app under `native/`: an app target (`native/Tokcat`) plus a Sw
 ## Features
 
 - 2D / 3D usage views (recent 30-day stacked token bars or interactive full-year 3D tile graph)
-- Overview and per-client tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, and Grok Build
+- Overview and per-client tabs for Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi
 - Codex, Claude, Grok Build, and Cursor agent-limit cards
 - Live menu-bar title — configurable: today's tokens, today's cost, total tokens, total cost, live tokens/min, plan usage percent, or icon-only
 - Plan usage percent from a chosen provider/window (or Auto — whichever window is closest to its cap), as % used or % left
