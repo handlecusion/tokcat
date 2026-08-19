@@ -47,6 +47,7 @@ public enum ClientRegistry {
         "hermes": ("Hermes", "#a78bfa", nil),
         "grok": ("Grok Build", "#111827", .mono),
         "pi": ("Pi", "#f472b6", .mono),
+        "omp": ("Oh My Pi", "#8b5cf6", .mono),
         "kimi": ("Kimi CLI", "#fbbf24", nil),
         "qwen": ("Qwen CLI", "#7c3aed", .mono),
         "roocode": ("Roo Code", "#ef4444", nil),

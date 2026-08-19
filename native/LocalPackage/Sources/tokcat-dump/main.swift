@@ -7,8 +7,9 @@
 //     and dumps the event ring + trace as JSON, mirroring
 //     `usage_dump tail-sim`. DIR is treated as a fake home: it may contain
 //     .claude/projects/**/*.jsonl, .codex/sessions/**/*.jsonl,
-//     .grok/sessions/**/updates.jsonl, and .hermes/state.db. Pass --now-ms
-//     with fixtures carrying fixed timestamps for deterministic windows.
+//     .grok/sessions/**/updates.jsonl, .omp/agent/sessions/**/*.jsonl, and
+//     .hermes/state.db. Pass --now-ms with fixtures carrying fixed
+//     timestamps for deterministic windows.
 //   tokcat-dump tail-live [--ticks N] [--window-secs N]
 //     dev smoke: runs the live tailer against the real environment for N
 //     ticks (5s apart) and prints the observed rates.
@@ -199,6 +200,13 @@ case "tail-live":
             print(
                 "tick \(n): added=\(added) events=\(events) "
                     + "rate60s=\(rate60)/m rate\(windowSecs)s=\(rateWindow)/m")
+            // Per (client, agent, model) rollup: the attribution the tray
+            // trace card renders, so a smoke run shows which source moved.
+            for bucket in await tailer.trace(windowSecs: windowSecs) {
+                print(
+                    "    \(bucket.client) \(bucket.agent) \(bucket.model): "
+                        + "\(bucket.tokens) tok / \(bucket.messages) msg")
+            }
             if n < ticks {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
