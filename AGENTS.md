@@ -48,6 +48,7 @@ In `https://github.com/handlecusion/tokcat/settings/secrets/actions`:
 ### 1. Bump both versions in `native/project.yml`
 
 - `MARKETING_VERSION` — must equal the tag (`v<MARKETING_VERSION>`); the workflow fails otherwise.
+  **Always bump the patch component** — `0.3.0` → `0.3.1`, never a minor bump, not even for a new feature such as another supported client.
 - `CURRENT_PROJECT_VERSION` — must be **greater** than the latest release's `sparkle:version`. Sparkle compares this, not the marketing version: forgetting it ships an appcast every Sparkle client silently ignores while the legacy `latest.json` channel still updates, splitting the fleet.
 
 ### 2. Commit
