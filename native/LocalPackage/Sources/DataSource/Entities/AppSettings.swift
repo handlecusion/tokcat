@@ -37,6 +37,11 @@ public enum PlanDisplayMode: String, Sendable, Codable, CaseIterable {
 // cumulative tokens and are intentionally excluded.
 public let planCapableProviders: [String] = ["claude", "codex", "grok", "cursor"]
 
+// Clients the Agent limits card gives a tile to before any snapshot arrives,
+// so a signed-out or erroring provider still has a visible place to report
+// from. Anything else only earns a tile while it is actually reporting quota.
+public let quotaTileProviders: [String] = ["claude", "codex", "gemini", "grok", "cursor"]
+
 // Short labels shown in the (text-only) menubar title.
 public let planProviderLabels: [String: String] = [
     "claude": "Claude",
@@ -44,6 +49,23 @@ public let planProviderLabels: [String: String] = [
     "grok": "Grok",
     "cursor": "Cursor",
 ]
+
+/// Which dashboard surfaces an agent appears on. The two surfaces answer
+/// different questions — "what did I spend" (the usage chart and the totals
+/// it feeds) and "how much of my plan is left" (the OAuth quota tile) — and
+/// an agent can be worth watching in one and pure noise in the other: a
+/// provider whose quota endpoint keeps erroring still has real token history,
+/// and a quota-only agent has no history at all.
+public enum AgentSurfaceScope: String, Sendable, Codable, CaseIterable {
+    case usageAndLimits = "usage_and_limits"
+    case usageOnly = "usage_only"
+    case limitsOnly = "limits_only"
+
+    public static let `default` = AgentSurfaceScope.usageAndLimits
+
+    public var includesUsage: Bool { self != .limitsOnly }
+    public var includesLimits: Bool { self != .usageOnly }
+}
 
 public struct PlanSelection: Sendable, Equatable {
     public var provider: PlanProvider
@@ -70,12 +92,24 @@ public struct AppSettings: Sendable, Equatable {
     public var planProvider: PlanProvider
     public var planWindow: String
     public var planDisplayMode: PlanDisplayMode
+    /// Client ids switched off entirely: no tab, no bars, no totals, no
+    /// limits tile. The master switch — `agentScopes` narrows an agent that
+    /// is still on. Kept sorted so the persisted blob does not churn on
+    /// every toggle.
+    public var hiddenAgents: [String]
+    /// Per-agent surface scope, for agents narrowed to one surface. Absent
+    /// means `AgentSurfaceScope.default`, so the map only carries the agents
+    /// the user actually narrowed, and it survives the master switch being
+    /// flipped off and on again.
+    public var agentScopes: [String: AgentSurfaceScope]
 
     public init(trayMode: TrayMode = .todayTokens, autostart: Bool = false,
                 animateTray: Bool = true, animationStyle: AnimationStyle = .cat,
                 detailedTrace: Bool = false, cursorUsage: Bool = false,
                 planProvider: PlanProvider = .auto, planWindow: String = "Session",
-                planDisplayMode: PlanDisplayMode = .used) {
+                planDisplayMode: PlanDisplayMode = .used,
+                hiddenAgents: [String] = [],
+                agentScopes: [String: AgentSurfaceScope] = [:]) {
         self.trayMode = trayMode
         self.autostart = autostart
         self.animateTray = animateTray
@@ -85,6 +119,8 @@ public struct AppSettings: Sendable, Equatable {
         self.planProvider = planProvider
         self.planWindow = planWindow
         self.planDisplayMode = planDisplayMode
+        self.hiddenAgents = hiddenAgents
+        self.agentScopes = agentScopes
     }
 
     public static let `default` = AppSettings()
