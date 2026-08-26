@@ -172,11 +172,16 @@ enum AppKitMenu {
         var title: String
         var checked: Bool
         var dotColor: NSColor?
+        /// Handed to `onSelect` in place of the title, for menus whose
+        /// labels are display names rather than identifiers.
+        var value: String?
 
-        init(title: String, checked: Bool, dotColor: NSColor? = nil) {
+        init(title: String, checked: Bool, dotColor: NSColor? = nil,
+             value: String? = nil) {
             self.title = title
             self.checked = checked
             self.dotColor = dotColor
+            self.value = value
         }
     }
 
@@ -185,7 +190,7 @@ enum AppKitMenu {
         init(onSelect: @escaping (String) -> Void) { self.onSelect = onSelect }
 
         @objc func pick(_ sender: NSMenuItem) {
-            onSelect(sender.title)
+            onSelect(sender.representedObject as? String ?? sender.title)
         }
     }
 
@@ -202,6 +207,7 @@ enum AppKitMenu {
                                 keyEquivalent: "")
             mi.target = handler
             mi.state = item.checked ? .on : .off
+            mi.representedObject = item.value
             if let color = item.dotColor {
                 mi.image = swatch(color)
             }

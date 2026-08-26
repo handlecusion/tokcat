@@ -18,6 +18,10 @@ struct AgentLimitsCard: View {
     /// Client tabs show only their own agent; the overview also folds in
     /// agents that report quota but have no local logs yet.
     var includeUnlistedAgents: Bool = true
+    /// Agents withheld from this surface, by display name. Shown as a count
+    /// next to the card's note so a thinned-out card explains itself, and
+    /// used to correct the empty state when everything is hidden.
+    var hiddenAgentNames: [String] = []
 
     /// Placeholder rows while OAuth quota is loading; real windows come from
     /// the providers (mirror of LIMIT_ROWS in AgentLimitsCard.tsx:21-31).
@@ -41,9 +45,11 @@ struct AgentLimitsCard: View {
         var seen = Set<String>()
         var result: [String] = []
         let known = snapshots
+        // Same eligibility rule DashboardStore uses to decide whether an agent
+        // even has a limits surface to be scoped to; they must not drift, or
+        // the settings sheet offers a scope that renders nothing here.
         for id in clients
-        where Self.limitRows[id] != nil || known[id] != nil
-            || ["codex", "claude", "gemini", "grok"].contains(id) {
+        where quotaTileProviders.contains(id) || known[id] != nil {
             if seen.insert(id).inserted { result.append(id) }
         }
         guard includeUnlistedAgents else { return result }
@@ -59,12 +65,17 @@ struct AgentLimitsCard: View {
             HStack(alignment: .top) {
                 CardHeading(text: title)
                 Spacer()
-                Text(note)
+                Text(hiddenAgentNames.isEmpty
+                     ? note
+                     : "\(note) · \(hiddenAgentNames.count) hidden")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .help(hiddenAgentNames.isEmpty ? "" : hiddenHelp)
             }
             if visible.isEmpty {
-                Text("No supported agents yet")
+                Text(hiddenAgentNames.isEmpty
+                     ? "No supported agents yet"
+                     : "Every agent is hidden here — Settings › Agents brings them back")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
@@ -159,6 +170,11 @@ struct AgentLimitsCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
         )
+    }
+
+    private var hiddenHelp: String {
+        "Hidden from limits: \(hiddenAgentNames.joined(separator: ", "))"
+            + "\nChange this in Settings › Agents."
     }
 
     /// Drawn brand glyph (clients.ts marks), falling back to the colored
