@@ -35,7 +35,7 @@
 | --- | --- |
 | `.github/workflows/claude-dispatch.yml` | `issues.labeled(claude)` → 세션 발화 + 링크 코멘트. `workflow_dispatch`(DISPATCH/DRY_RUN)로 수동 실행 가능 |
 | `.github/workflows/claude-followup.yml` | 오너의 `@claude` 코멘트/리뷰 → 후속 세션. 시간당 3회 상한 |
-| `.github/workflows/claude-merge-gate.yml` | 오너 승인(리뷰 Approve / `approved` 라벨) → auto-merge. 라벨 제거 시 해제 |
+| `.github/workflows/claude-merge-gate.yml` | 오너 승인(리뷰 Approve / `approved` 라벨) → auto-merge. 라벨 제거·변경 요청·새 푸시 시 해제. 머지되면 연결 이슈를 닫고 라벨 정리 |
 | `scripts/claude-harness/build-payload.py` | 이슈/PR + 토론 + 문서·스펙을 한 텍스트로 조립 |
 | `scripts/claude-harness/fire.sh` | `/fire` 호출, 429/5xx 재시도, 세션 ID/URL 출력 |
 | `.claude/harness/ROUTINE_PROMPT.md` | 세션이 따르는 지침의 원본. 클론에 있으면 claude.ai에 저장된 사본보다 우선 |
@@ -65,8 +65,9 @@
 
 - **드라이런**: `gh workflow run claude-dispatch.yml -f issue_number=<N> -f kind=DRY_RUN` (또는
   로컬에서 `GH_REPO=handlecusion/tokcat scripts/claude-harness/build-payload.py --kind DRY_RUN --issue N > p.txt && scripts/claude-harness/fire.sh p.txt`).
-  세션이 이슈에 "harness dry run OK" 코멘트를 남기면 경로 전체가 살아 있는 것. (2026-08-30 #68로 검증 완료:
-  발화 → 세션 생성 → 클론 → owner로 인증 → 서명 코멘트.)
+  세션이 이슈에 "harness dry run OK" 코멘트를 남기면 경로 전체가 살아 있는 것.
+  (2026-08-30 E2E 검증: #70 DRY_RUN, #71→PR #72 — 라벨 → 세션 → PR+인라인 셀프 리뷰 → `@claude` 리뷰 반영 →
+  `approved` → auto-merge. 머지는 github-actions[bot]이 수행하므로 `issues: write` 없이는 `Closes #N`이 안 닫힌다.)
 - **재실행**: `claude:running`을 뗀 뒤, `claude` 라벨을 떼었다가 다시 붙인다(라벨 *추가* 이벤트가 트리거).
 - **질문 답변**: `claude:needs-info`가 붙어 있는 동안은 오너의 아무 코멘트나 후속 세션을 띄운다. 그 외에는
   코멘트/리뷰(인라인 코멘트 포함) 어딘가에 `@claude`가 있어야 한다. Claude 글을 Quote-reply 해도 된다.

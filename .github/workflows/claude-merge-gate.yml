@@ -21,11 +21,12 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
   pull_request_target:
-    types: [labeled, unlabeled, synchronize]
+    types: [labeled, unlabeled, synchronize, closed]
 
 permissions:
   contents: write
   pull-requests: write
+  issues: write   # closing the linked issue on merge needs this (GITHUB_TOKEN otherwise leaves "Closes #N" unresolved)
 
 concurrency:
   group: claude-merge-gate-${{ github.event.pull_request.number }}
@@ -47,6 +48,10 @@ jobs:
       || (github.event_name == 'pull_request_target'
         && github.event.action == 'synchronize'
         && contains(github.event.pull_request.labels.*.name, 'approved'))
+      || (github.event_name == 'pull_request_target'
+        && github.event.action == 'closed'
+        && github.event.pull_request.merged == true
+        && startsWith(github.event.pull_request.head.ref, 'claude/'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -73,6 +78,7 @@ jobs:
             pull_request_target/labeled/*)                   mode=approve ;;
             pull_request_target/unlabeled/*)                 mode=withdraw; why="approved 라벨이 제거" ;;
             pull_request_target/synchronize/*)               mode=withdraw; why="승인 뒤 새 커밋이 푸시" ;;
+            pull_request_target/closed/*)                    mode=finish ;;
           esac
           [ -n "$mode" ] || { echo "::error::unhandled $EVENT/$ACTION/$REVIEW_STATE"; exit 1; }
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
@@ -137,6 +143,28 @@ jobs:
               -f body="$(printf '✋ **Claude harness** — %s되어 승인을 해제했습니다(approved 라벨 제거, 자동 머지 해제). 다시 검토한 뒤 승인해 주세요.\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$WHY" "$PR")" --silent
           else
             echo "nothing to withdraw"
+          fi
+
+      - name: Merged → close the linked issue and clear harness labels
+        if: steps.decide.outputs.mode == 'finish'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          issue=$(printf '%s' "$PR_BODY" | grep -oE 'claude-harness[^>]*issue=[0-9]+' | grep -oE '[0-9]+$' | head -1)
+          [ -n "$issue" ] || issue=$(printf '%s' "$HEAD_REF" | grep -oE 'issue-[0-9]+$' | grep -oE '[0-9]+')
+          [ -n "$issue" ] || { echo "no linked issue found in PR body/branch — nothing to close"; exit 0; }
+          state=$(gh api "repos/$GH_REPO/issues/$issue" --jq .state)
+          for l in 'claude%3Apr-open' 'claude%3Arunning' 'claude%3Aneeds-info'; do
+            gh api -X DELETE "repos/$GH_REPO/issues/$issue/labels/$l" --silent 2>/dev/null || true
+          done
+          if [ "$state" = "open" ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$issue/comments" \
+              -f body="$(printf '✅ **Claude harness** — PR #%s가 main에 머지되어 이 이슈를 닫습니다.\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$PR" "$issue")" --silent
+            gh api -X PATCH "repos/$GH_REPO/issues/$issue" -f state=closed -f state_reason=completed --silent
+            echo "closed #$issue"
+          else
+            echo "#$issue already $state"
           fi
 
       - name: Report failure on the PR
