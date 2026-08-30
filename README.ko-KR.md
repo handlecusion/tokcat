@@ -272,9 +272,9 @@ git push origin v<VERSION>
 
 ---
 
-## 이슈를 Claude에게 위임하기
+## Claude에게 이슈 위임하기
 
-오너가 이슈에 `claude` 라벨을 붙이면 Claude Code 클라우드 세션이 그 이슈를 맡습니다. 이슈 내용과 저장소 문서를 함께 읽고, 요구사항이 부족하면 이슈에 질문을 남기며, 충분하면 `claude/issue-<N>` 브랜치에서 작업해 셀프 리뷰가 달린 PR을 엽니다.
+오너가 이슈에 `claude` 라벨을 붙이면 Claude Code 클라우드 세션이 그 이슈를 맡습니다. 이슈 내용과 저장소 문서를 함께 읽고, 요구사항이 부족하면 이슈에 `claude:needs-info` 라벨을 붙이고 질문을 남기며, 충분하면 `claude/issue-<N>` 브랜치에서 작업해 셀프 리뷰가 달린 PR을 엽니다.
 
 저절로 머지되는 일은 없습니다. Claude가 연 PR은 오너가 `approved` 라벨(또는 리뷰 **Approve**)로 승인해야 auto-merge가 켜지고, 그 뒤 필수 CI 체크가 모두 통과해야 `main`에 들어갑니다.
 

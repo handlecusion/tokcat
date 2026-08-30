@@ -318,7 +318,7 @@ The workflow builds one ad-hoc-signed universal app, packages `Tokcat_<version>_
 
 ## Delegating issues to Claude
 
-When the owner puts the `claude` label on an issue, a Claude Code cloud session picks it up: it reads the issue along with the repo docs, asks its questions on the issue itself when the requirements are too thin to implement, and otherwise works on a `claude/issue-<N>` branch and opens a pull request with a self-review note.
+When the owner puts the `claude` label on an issue, a Claude Code cloud session picks it up: it reads the issue along with the repo docs, asks its questions on the issue itself and marks it `claude:needs-info` when the requirements are too thin to implement, and otherwise works on a `claude/issue-<N>` branch and opens a pull request with a self-review note.
 
 Nothing lands on its own. A Claude pull request auto-merges only after the owner approves it — the `approved` label, or a review **Approve** — and even then only once the required CI checks are green.
 
