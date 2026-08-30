@@ -1,0 +1,146 @@
+name: Claude harness · merge gate
+
+# The owner's approval is the only thing that can put a PR on the path to
+# main. Two ways to approve:
+#   • a GitHub review with state "approved" (works when the owner is not the PR author)
+#   • the `approved` label (works on Claude's PRs too — GitHub does not let an
+#     account approve its own PR, and Claude's PRs are opened under the owner's
+#     GitHub identity)
+# Either enables GitHub auto-merge; the `protect-main` ruleset requires the CI
+# checks, so the merge happens only after CI is green.
+#
+# Approval is withdrawn (label removed, auto-merge disabled) when: the label is
+# removed, the owner requests changes or dismisses their review, or new commits
+# are pushed — the owner re-approves what they actually reviewed.
+#
+# A Claude cloud session acts under the owner's identity but *through the Claude
+# GitHub App*; a label applied that way is refused, so a session can never
+# approve its own work.
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_target:
+    types: [labeled, unlabeled, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: claude-merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Owner approval → auto-merge
+    if: >-
+      (github.event_name == 'pull_request_review'
+        && github.event.sender.login == github.repository_owner
+        && (github.event.review.state == 'approved'
+            || github.event.review.state == 'changes_requested'
+            || github.event.action == 'dismissed'))
+      || (github.event_name == 'pull_request_target'
+        && github.event.action != 'synchronize'
+        && github.event.label.name == 'approved'
+        && github.event.sender.login == github.repository_owner)
+      || (github.event_name == 'pull_request_target'
+        && github.event.action == 'synchronize'
+        && contains(github.event.pull_request.labels.*.name, 'approved'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      ACTOR: ${{ github.event.sender.login }}
+      PR: ${{ github.event.pull_request.number }}
+      ACTION: ${{ github.event.action }}
+      EVENT: ${{ github.event_name }}
+      REVIEW_STATE: ${{ github.event.review.state || '' }}
+      HARNESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Decide
+        id: decide
+        run: |
+          # approve   → enable auto-merge
+          # withdraw  → remove `approved`, disable auto-merge
+          mode=""; why=""
+          case "$EVENT/$ACTION/$REVIEW_STATE" in
+            pull_request_review/submitted/approved)         mode=approve ;;
+            pull_request_review/submitted/changes_requested) mode=withdraw; why="오너가 변경을 요청" ;;
+            pull_request_review/dismissed/*)                 mode=withdraw; why="승인 리뷰가 철회" ;;
+            pull_request_target/labeled/*)                   mode=approve ;;
+            pull_request_target/unlabeled/*)                 mode=withdraw; why="approved 라벨이 제거" ;;
+            pull_request_target/synchronize/*)               mode=withdraw; why="승인 뒤 새 커밋이 푸시" ;;
+          esac
+          [ -n "$mode" ] || { echo "::error::unhandled $EVENT/$ACTION/$REVIEW_STATE"; exit 1; }
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "why=$why" >> "$GITHUB_OUTPUT"
+          echo "$EVENT/$ACTION/$REVIEW_STATE → $mode"
+
+      - name: Gate 2 — owner, and a human (not a Claude session) approved
+        if: steps.decide.outputs.mode == 'approve'
+        run: |
+          if [ "$ACTOR" != "$OWNER" ]; then
+            echo "::error::actor '$ACTOR' is not the repository owner '$OWNER' — refusing"; exit 1
+          fi
+          if [ "$EVENT" = "pull_request_review" ]; then
+            state=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --jq \
+              "[.[] | select(.user.login == \"$OWNER\")] | last | .state // \"\"")
+            [ "$state" = "APPROVED" ] || { echo "::error::latest owner review is '$state', not APPROVED"; exit 1; }
+          else
+            # The label event must not have been performed through the Claude GitHub App
+            # (that is how a cloud session writes as the owner).
+            via=$(gh api "repos/$GH_REPO/issues/$PR/events?per_page=100" --paginate --jq \
+              '[.[] | select(.event == "labeled" and .label.name == "approved")] | last | .performed_via_github_app.slug // ""' | tail -n1)
+            if [ -n "$via" ]; then
+              gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/approved" --silent || true
+              gh api -X POST "repos/$GH_REPO/issues/$PR/comments" \
+                -f body="$(printf '✋ **Claude harness** — `approved` 라벨이 GitHub App(%s)을 통해 붙었습니다. 사람이 직접 붙인 승인만 인정하므로 라벨을 제거했습니다.\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$via" "$PR")" --silent
+              echo "::error::approved label was applied via GitHub App '$via' — refusing"; exit 1
+            fi
+          fi
+
+      - name: Enable auto-merge (merges when CI is green)
+        if: steps.decide.outputs.mode == 'approve'
+        run: |
+          state=$(gh pr view "$PR" --json state,isDraft,mergeStateStatus --jq '"\(.state) draft=\(.isDraft) merge=\(.mergeStateStatus)"')
+          echo "PR #$PR: $state"
+          case "$state" in
+            OPEN\ draft=false*) ;;
+            *) echo "::error::PR is not an open, non-draft PR ($state)"; exit 1 ;;
+          esac
+          if ! gh pr merge "$PR" --auto --merge; then
+            # Auto-merge is refused when nothing is pending (checks already green): merge directly.
+            gh pr merge "$PR" --merge
+          fi
+          if [ "$(gh pr view "$PR" --json state --jq .state)" = "MERGED" ]; then
+            how="CI가 이미 통과해 즉시 머지했습니다."
+          else
+            how="자동 머지 예약 — 필수 CI 체크가 모두 통과하면 GitHub이 main에 머지합니다. 그 전에 새 커밋이 푸시되면 승인은 해제됩니다."
+          fi
+          gh api -X POST "repos/$GH_REPO/issues/$PR/comments" \
+            -f body="$(printf '✅ **Claude harness** — 오너 승인 확인 (%s). %s\n- 런: %s\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$EVENT" "$how" "$HARNESS_RUN_URL" "$PR")" --silent
+
+      - name: Withdraw approval
+        if: steps.decide.outputs.mode == 'withdraw'
+        env:
+          WHY: ${{ steps.decide.outputs.why }}
+        run: |
+          had_label=$(gh api "repos/$GH_REPO/issues/$PR" --jq '[.labels[].name] | index("approved") != null')
+          had_auto=$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/approved" --silent 2>/dev/null || true
+          gh pr merge "$PR" --disable-auto 2>/dev/null || true
+          if [ "$had_label" = "true" ] || [ "$had_auto" = "true" ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$PR/comments" \
+              -f body="$(printf '✋ **Claude harness** — %s되어 승인을 해제했습니다(approved 라벨 제거, 자동 머지 해제). 다시 검토한 뒤 승인해 주세요.\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$WHY" "$PR")" --silent
+          else
+            echo "nothing to withdraw"
+          fi
+
+      - name: Report failure on the PR
+        if: failure()
+        run: |
+          gh api -X POST "repos/$GH_REPO/issues/$PR/comments" \
+            -f body="$(printf '✋ **Claude harness** — 머지 게이트 처리에 실패했습니다. 런 로그: %s\n\n<!-- claude-harness kind=ERROR issue=%s -->' "$HARNESS_RUN_URL" "$PR")" --silent || true

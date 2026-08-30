@@ -1,0 +1,184 @@
+name: Claude harness · follow-up
+
+# The owner continues a harness thread:
+#   • on an issue: a comment with `@claude`, or any comment while the issue
+#     carries `claude:needs-info` (Claude asked, the owner answered)
+#   • on a Claude PR (head branch claude/*, same repo): a review or comment with
+#     `@claude` in its body or in any of its inline comments
+# → a new cloud session picks the thread up.
+#
+# Loop safety: a cloud session writes as the owner *through the Claude GitHub
+# App* (`performed_via_github_app.slug == "claude"`), so its comments are
+# refused here. Harness plumbing comments come from github-actions[bot].
+# A per-thread cap of 3 fires/hour bounds anything else.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: claude-harness-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  followup:
+    name: Fire follow-up session
+    if: >-
+      github.event.sender.login == github.repository_owner
+      && (
+        (github.event_name == 'issue_comment'
+          && github.event.comment.performed_via_github_app == null
+          && (contains(github.event.comment.body, '@claude')
+              || contains(github.event.issue.labels.*.name, 'claude:needs-info')))
+        ||
+        (github.event_name == 'pull_request_review'
+          && github.event.review.state != 'approved')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      ACTOR: ${{ github.event.sender.login }}
+      NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+      COMMENT_ID: ${{ github.event.comment.id || '' }}
+      REVIEW_ID: ${{ github.event.review.id || '' }}
+      IS_PR: ${{ github.event.issue.pull_request != null || github.event_name == 'pull_request_review' }}
+      HARNESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Gate 2 — owner, human, eligible thread, not already running, rate cap
+        id: guard
+        run: |
+          skip() { echo "$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "$ACTOR" != "$OWNER" ]; then
+            echo "::error::actor '$ACTOR' is not the repository owner '$OWNER' — refusing"; exit 1
+          fi
+
+          # --- the triggering text: a comment, or a review body + its inline comments ---
+          if [ -n "$COMMENT_ID" ]; then
+            c=$(gh api "repos/$GH_REPO/issues/comments/$COMMENT_ID")
+            via=$(printf '%s' "$c" | jq -r '.performed_via_github_app.slug // ""')
+            [ -z "$via" ] || skip "comment $COMMENT_ID was posted via GitHub App '$via' (a Claude session) — not a human"
+            text=$(printf '%s' "$c" | jq -r '.body // ""')
+          else
+            rv=$(gh api "repos/$GH_REPO/pulls/$NUMBER/reviews/$REVIEW_ID")
+            rc=$(gh api "repos/$GH_REPO/pulls/$NUMBER/reviews/$REVIEW_ID/comments?per_page=100" --paginate)
+            text=$(printf '%s\n%s' "$(printf '%s' "$rv" | jq -r '.body // ""')" "$(printf '%s' "$rc" | jq -r '.[].body // ""')")
+          fi
+          # Claude's own posts carry a marker *at the start of a line*; a quoted reply ("> <!-- …")
+          # does not, so the owner can Quote-reply Claude and still trigger a follow-up.
+          if printf '%s\n' "$text" | grep -qE '^<!-- claude-harness'; then
+            skip "text carries an unquoted harness marker — treated as a harness post, not a request"
+          fi
+
+          issue=$(gh api "repos/$GH_REPO/issues/$NUMBER")
+          labels=$(printf '%s' "$issue" | jq -r '[.labels[].name] | join(",")')
+          has_label() { printf '%s' "$labels" | tr ',' '\n' | grep -qx "$1"; }
+
+          # --- eligibility ---
+          if [ "$IS_PR" = "true" ]; then
+            pr=$(gh api "repos/$GH_REPO/pulls/$NUMBER")
+            head_ref=$(printf '%s' "$pr" | jq -r .head.ref)
+            head_repo=$(printf '%s' "$pr" | jq -r '.head.repo.full_name // ""')
+            pr_state=$(printf '%s' "$pr" | jq -r .state)
+            case "$head_ref" in claude/*) ;; *) skip "PR #$NUMBER head '$head_ref' is not a claude/* branch — not a harness PR" ;; esac
+            [ "$head_repo" = "$GH_REPO" ] || skip "PR #$NUMBER comes from fork '$head_repo' — refusing to run owner-credentialed sessions on fork code"
+            [ "$pr_state" = "open" ] || skip "PR #$NUMBER is $pr_state"
+            printf '%s\n' "$text" | grep -qi '@claude' || skip "no @claude in the review body or its inline comments"
+          else
+            has_label claude || skip "issue #$NUMBER has no 'claude' label — not delegated"
+            if ! printf '%s\n' "$text" | grep -qi '@claude' && ! has_label 'claude:needs-info'; then
+              skip "no @claude and the issue is not waiting for answers (claude:needs-info)"
+            fi
+          fi
+
+          # --- one session per thread at a time; `[force]` overrides a stale flag ---
+          if has_label 'claude:running'; then
+            if printf '%s\n' "$text" | grep -qi '\[force\]'; then
+              echo "claude:running present but [force] given — proceeding"
+            else
+              gh api -X POST "repos/$GH_REPO/issues/$NUMBER/comments" \
+                -f body="$(printf '🛰️ **Claude harness** — 이 스레드에는 아직 `claude:running` 세션이 있어 새 세션을 띄우지 않았습니다. 세션이 끝났는데도 라벨이 남아 있다면 라벨을 떼거나 코멘트에 `[force]`를 넣어 다시 호출해 주세요.\n\n<!-- claude-harness kind=SKIP issue=%s -->' "$NUMBER")" --silent
+              skip "claude:running present"
+            fi
+          fi
+
+          # --- rate cap: harness session comments (posted by github-actions[bot]) in the last hour ---
+          since=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)
+          fires=$(gh api "repos/$GH_REPO/issues/$NUMBER/comments?since=$since&per_page=100" --paginate \
+                    --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-harness session=")))] | length' \
+                  | awk '{s+=$1} END {print s+0}')
+          if [ "${fires:-0}" -ge 3 ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$NUMBER/comments" \
+              -f body="$(printf '🛰️ **Claude harness** — 최근 1시간에 세션이 %s번 떴습니다. 루프 방지를 위해 이번 트리거는 건너뜁니다. 1시간 뒤 다시 호출해 주세요.\n\n<!-- claude-harness kind=RATE_LIMIT issue=%s -->' "$fires" "$NUMBER")" --silent
+            skip "rate cap"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip == 'false'
+        with:
+          fetch-depth: 1
+
+      - name: Build payload
+        if: steps.guard.outputs.skip == 'false'
+        run: |
+          extra=()
+          [ -n "$COMMENT_ID" ] && extra+=(--comment-id "$COMMENT_ID")
+          [ -n "$REVIEW_ID" ] && extra+=(--review-id "$REVIEW_ID")
+          python3 scripts/claude-harness/build-payload.py \
+            --kind FOLLOW_UP --issue "$NUMBER" --repo-root . "${extra[@]}" > payload.txt
+          echo "payload: $(wc -m < payload.txt | tr -d ' ') chars"
+          sed -n '1,14p' payload.txt
+
+      - name: Fire routine
+        if: steps.guard.outputs.skip == 'false'
+        id: fire
+        env:
+          CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
+          CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
+        run: bash scripts/claude-harness/fire.sh payload.txt
+
+      - name: Post session link + labels
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          SESSION_ID: ${{ steps.fire.outputs.session_id }}
+          SESSION_URL: ${{ steps.fire.outputs.session_url }}
+        run: |
+          body=$(cat <<MSG
+          🛰️ **Claude Code 후속 세션 시작** — ${SESSION_URL}
+
+          방금 남긴 코멘트/리뷰를 이어받아 처리합니다. 앱의 **Code** 탭에서 개입할 수 있습니다.
+          - 워크플로우 런: ${HARNESS_RUN_URL}
+
+          <!-- claude-harness session=${SESSION_ID} kind=FOLLOW_UP issue=${NUMBER} -->
+          MSG
+          )
+          gh api -X POST "repos/$GH_REPO/issues/$NUMBER/comments" -f body="$body" --jq .html_url
+          gh api -X POST "repos/$GH_REPO/issues/$NUMBER/labels" -f 'labels[]=claude:running' --silent
+          gh api -X DELETE "repos/$GH_REPO/issues/$NUMBER/labels/claude%3Aneeds-info" --silent 2>/dev/null || true
+          # Approval, if any, no longer covers what the session is about to push.
+          if [ "$IS_PR" = "true" ]; then
+            gh api -X DELETE "repos/$GH_REPO/issues/$NUMBER/labels/approved" --silent 2>/dev/null || true
+            gh pr merge "$NUMBER" --disable-auto 2>/dev/null || true
+          fi
+
+      - name: Report failure on the thread
+        if: failure()
+        env:
+          SESSION_URL: ${{ steps.fire.outputs.session_url }}
+        run: |
+          if [ -n "$SESSION_URL" ]; then
+            msg=$(printf '🛰️ **Claude harness** — 후속 세션은 시작됐지만(%s) 코멘트/라벨 처리에 실패했습니다. 런 로그: %s\n\n<!-- claude-harness kind=ERROR issue=%s -->' "$SESSION_URL" "$HARNESS_RUN_URL" "$NUMBER")
+          else
+            msg=$(printf '🛰️ **Claude harness** — 후속 세션을 띄우지 못했습니다. 런 로그: %s\n\n<!-- claude-harness kind=ERROR issue=%s -->' "$HARNESS_RUN_URL" "$NUMBER")
+          fi
+          gh api -X POST "repos/$GH_REPO/issues/$NUMBER/comments" -f body="$msg" --silent || true

@@ -105,6 +105,29 @@ cd ~/Code/homebrew-tokcat && git commit -am "tokcat <VERSION>" && git push origi
 - **`COPYFILE_DISABLE=1` on the updater tarball.** macOS `tar` otherwise embeds AppleDouble (`._*`) members that macOS `tar -tzf` hides but the Rust tar crate in `tauri-plugin-updater` chokes on — verified by the local 0.1.42→0.2.0 e2e test.
 - **macOS 13 is the floor** (`deploymentTarget`, `LSMinimumSystemVersion`, cask `depends_on macos: ">= :ventura"`). macOS 11/12 users stay on `v0.1.42`.
 
+## Claude harness (issue → cloud session → PR → gated merge)
+
+Owner-only automation, documented in `.claude/harness/README.md`:
+
+- Owner adds the `claude` label to an issue → `.github/workflows/claude-dispatch.yml`
+  verifies the actor is the repository owner, builds a payload (issue, discussion,
+  `AGENTS.md`, `docs/llms-full.txt`, referenced specs), fires the Claude Code
+  **routine** over its `/fire` API, and comments the session link on the issue.
+  The session shows up in the Claude desktop/mobile apps.
+- The session follows `.claude/harness/ROUTINE_PROMPT.md`: asks on the issue when
+  requirements are missing (`claude:needs-info`), otherwise works on
+  `claude/issue-<N>`, opens a PR with a verification section, and posts a
+  self-review note. Reply with `@claude` to continue (`claude-followup.yml`).
+- Merge gate (`claude-merge-gate.yml`): owner approval (review **Approve**, or the
+  `approved` label for Claude's own PRs) enables auto-merge; the `protect-main`
+  ruleset requires the three CI jobs, so nothing lands before CI is green.
+- Secrets: `CLAUDE_ROUTINE_FIRE_URL`, `CLAUDE_ROUTINE_FIRE_TOKEN` (per-routine
+  token; it can only fire that routine). No Claude credentials on runners.
+- Sessions write to GitHub as the owner *via the Claude GitHub App*
+  (`performed_via_github_app`); the workflows use that to tell a human apart
+  from a session, so never post `@claude` or the `approved` label from a session.
+- If you rename a CI job, update the ruleset's required checks too.
+
 ## Repo conventions
 
 - **Commit style**: short imperative subject (~70 chars), optional body explaining the *why*. See recent history.
