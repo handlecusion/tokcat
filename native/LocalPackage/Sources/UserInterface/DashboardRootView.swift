@@ -153,7 +153,12 @@ public struct DashboardRootView: View {
                     note: "Session / weekly / model limits",
                     includeUnlistedAgents: false)
             }
-            if !store.isAgentHiddenFromUsage(clientId) {
+            // `presentClients` is already the year's usage clients minus the
+            // ones hidden from that surface, so it answers both questions at
+            // once: an agent whose logs are all in another year would
+            // otherwise get an empty chart and a zeroed streaks card under a
+            // tab it only owns because of its limits tile.
+            if store.presentClients.contains(clientId) {
                 UsageBarChart(
                     title: "Token Usage",
                     subtitle: "Local token history",
