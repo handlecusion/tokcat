@@ -1,0 +1,148 @@
+name: Claude harness · dispatch
+
+# Owner puts the `claude` label on an issue → a Claude Code cloud session is
+# started for it and the session link is posted back on the issue.
+#
+# No Claude credentials live on the runner. The only secret is a per-routine
+# bearer token that can do exactly one thing: fire this routine.
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to dispatch
+        required: true
+        type: number
+      kind:
+        description: DISPATCH = real work · DRY_RUN = connectivity check only
+        type: choice
+        options: [DISPATCH, DRY_RUN]
+        default: DISPATCH
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: claude-harness-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Fire cloud session
+    # Gate 1 (expression): only the repository owner, only via the `claude` label
+    # or a manual run. Anyone can open issues; only the owner can delegate them.
+    if: >-
+      (github.event_name == 'issues'
+        && github.event.label.name == 'claude'
+        && github.event.sender.login == github.repository_owner)
+      || (github.event_name == 'workflow_dispatch'
+        && github.actor == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      ACTOR: ${{ github.event.sender.login || github.actor }}
+      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+      KIND: ${{ inputs.kind || 'DISPATCH' }}
+      HARNESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SECRETS_PRESENT: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL != '' && secrets.CLAUDE_ROUTINE_FIRE_TOKEN != '' }}
+    steps:
+      - name: Gate 2 — re-verify the actor is the repository owner
+        run: |
+          if [ "$ACTOR" != "$OWNER" ]; then
+            echo "::error::actor '$ACTOR' is not the repository owner '$OWNER' — refusing"
+            exit 1
+          fi
+          if [ "$SECRETS_PRESENT" != "true" ]; then
+            echo "::error::CLAUDE_ROUTINE_FIRE_URL / CLAUDE_ROUTINE_FIRE_TOKEN secrets are missing — see .claude/harness/README.md"
+            exit 1
+          fi
+
+      - name: Skip if a session is already running for this issue
+        id: guard
+        run: |
+          labels=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq '[.labels[].name] | join(",")')
+          is_pr=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq 'has("pull_request")')
+          if [ "$is_pr" = "true" ]; then
+            echo "::error::#$ISSUE_NUMBER is a pull request; the dispatch trigger is for issues"
+            exit 1
+          fi
+          if [ "$KIND" = "DISPATCH" ] && printf '%s' "$labels" | tr ',' '\n' | grep -qx 'claude:running'; then
+            gh api -X POST "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" \
+              -f body="$(printf '🛰️ **Claude harness** — 이미 실행 중인 세션이 있어 새로 띄우지 않았습니다. 다시 띄우려면 `claude:running` 라벨을 뗀 뒤 `claude` 라벨을 떼었다가 다시 붙여 주세요.\n\n<!-- claude-harness kind=SKIP issue=%s -->' "$ISSUE_NUMBER")" --silent
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Rate cap: harness session comments (posted by github-actions[bot]) in the last hour.
+          since=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)
+          fires=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments?since=$since&per_page=100" --paginate \
+                    --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-harness session=")))] | length' \
+                  | awk '{s+=$1} END {print s+0}')
+          if [ "${fires:-0}" -ge 3 ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" \
+              -f body="$(printf '🛰️ **Claude harness** — 최근 1시간에 세션이 %s번 떴습니다. 루프 방지를 위해 이번 트리거는 건너뜁니다.\n\n<!-- claude-harness kind=RATE_LIMIT issue=%s -->' "$fires" "$ISSUE_NUMBER")" --silent
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip == 'false'
+        with:
+          fetch-depth: 1
+
+      - name: Build payload (issue + discussion + docs/specs)
+        if: steps.guard.outputs.skip == 'false'
+        run: |
+          python3 scripts/claude-harness/build-payload.py \
+            --kind "$KIND" --issue "$ISSUE_NUMBER" --repo-root . > payload.txt
+          echo "payload: $(wc -m < payload.txt | tr -d ' ') chars"
+          sed -n '1,12p' payload.txt
+
+      - name: Fire routine
+        if: steps.guard.outputs.skip == 'false'
+        id: fire
+        env:
+          CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
+          CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
+        run: bash scripts/claude-harness/fire.sh payload.txt
+
+      - name: Post session link + labels
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          SESSION_ID: ${{ steps.fire.outputs.session_id }}
+          SESSION_URL: ${{ steps.fire.outputs.session_url }}
+        run: |
+          body=$(cat <<EOF
+          🛰️ **Claude Code 세션 시작** — ${SESSION_URL}
+
+          데스크탑/모바일 Claude 앱의 **Code** 탭에서 이 세션을 실시간으로 보고 바로 개입할 수 있습니다.
+          - 종류: \`${KIND}\` · 작업 브랜치: \`claude/issue-${ISSUE_NUMBER}\`
+          - 요구사항이 부족하면 Claude가 이 이슈에 질문을 남기고 \`claude:needs-info\` 라벨을 답니다. 답변에 \`@claude\`를 붙이면 이어서 진행합니다.
+          - 워크플로우 런: ${HARNESS_RUN_URL}
+
+          <!-- claude-harness session=${SESSION_ID} kind=${KIND} issue=${ISSUE_NUMBER} -->
+          EOF
+          )
+          gh api -X POST "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" -f body="$body" --jq .html_url
+          if [ "$KIND" = "DISPATCH" ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$ISSUE_NUMBER/labels" -f 'labels[]=claude:running' --silent
+            for l in 'claude%3Aneeds-info' 'claude%3Apr-open'; do
+              gh api -X DELETE "repos/$GH_REPO/issues/$ISSUE_NUMBER/labels/$l" --silent 2>/dev/null || true
+            done
+          fi
+
+      - name: Report failure on the issue
+        if: failure()
+        env:
+          SESSION_URL: ${{ steps.fire.outputs.session_url }}
+        run: |
+          if [ -n "$SESSION_URL" ]; then
+            msg=$(printf '🛰️ **Claude harness** — 세션은 시작됐지만(%s) 코멘트/라벨 처리에 실패했습니다. 라벨을 다시 붙이지 마세요(세션이 두 개 뜹니다). 런 로그: %s\n\n<!-- claude-harness kind=ERROR issue=%s -->' "$SESSION_URL" "$HARNESS_RUN_URL" "$ISSUE_NUMBER")
+          else
+            msg=$(printf '🛰️ **Claude harness** — 세션을 띄우지 못했습니다. 런 로그: %s\n\n<!-- claude-harness kind=ERROR issue=%s -->' "$HARNESS_RUN_URL" "$ISSUE_NUMBER")
+          fi
+          gh api -X POST "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" -f body="$msg" --silent || true
