@@ -65,6 +65,12 @@ public final class DashboardStore: ObservableObject {
     /// Clients in the selected year that reach the usage surface — the chart,
     /// its totals, the tab strip.
     @Published public private(set) var presentClients: [String] = []
+    /// Client ids withheld from the usage surface, for consumers that filter
+    /// a live stream instead of the year's history — the tray's tokens/min.
+    /// `agentsHiddenFromUsage` is the *display* count and lists only agents
+    /// that have history to hide; an agent with no stored logs can still be
+    /// burning tokens right now, so the live filter needs the raw predicate.
+    @Published public private(set) var clientsHiddenFromUsage: Set<String> = []
     /// The same year's clients as the limits surface sees them. A separate
     /// list because the two surfaces are filtered independently: an agent can
     /// count toward the chart yet have no business owning a quota tile, and
@@ -113,6 +119,10 @@ public final class DashboardStore: ObservableObject {
             } else {
                 trayTitle = computeTrayTitle()
             }
+            // Cheap and unconditional: `recomputeDerived` covers the branch
+            // above, but an import that rewrites settings wholesale can land
+            // on either path.
+            refreshHiddenClients()
             // cursorUsage gates the Cursor tab out of dashboardClients —
             // don't leave the user stranded on a tab that just vanished.
             revalidateActiveTab()
@@ -454,6 +464,10 @@ public final class DashboardStore: ObservableObject {
         let view = defaults.string(forKey: Keys.usageView)
         self.usageView = (view == "3d") ? "3d" : "2d"
         self.settings = Self.loadSettings(from: defaults)
+        // Assignment in init skips didSet, and the tailer starts publishing
+        // before the first refresh lands — seed the live filter from storage
+        // so a hidden agent never gets a free window in the menubar at launch.
+        self.clientsHiddenFromUsage = Set(self.settings.hiddenAgents)
         // Debug/verification hook: force the 3D graph for this session only
         // (assignment in init skips didSet, so nothing is persisted).
         if ProcessInfo.processInfo.environment["TOKCAT_FORCE_3D"] == "1" {
@@ -573,7 +587,21 @@ public final class DashboardStore: ObservableObject {
 
     // MARK: - Derived state
 
+    /// Recompute the live-tail exclusion set. Only ids the user has actually
+    /// touched can be hidden, so this walks the stored switches rather than
+    /// the whole inventory — it runs on every settings write.
+    private func refreshHiddenClients() {
+        var ids = Set(settings.hiddenAgents)
+        for id in settings.agentScopes.keys where isAgentHiddenFromUsage(id) {
+            ids.insert(id)
+        }
+        if clientsHiddenFromUsage != ids { clientsHiddenFromUsage = ids }
+    }
+
     private func recomputeDerived() {
+        // Ahead of the `fullPayload` guard: the tray keeps ticking with no
+        // history loaded, and the switch still has to hold there.
+        refreshHiddenClients()
         guard let full = fullPayload else {
             payload = nil
             overviewStats = nil

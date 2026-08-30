@@ -81,6 +81,30 @@ public struct TraceBucket: Codable, Equatable, Sendable {
     }
 }
 
+/// Everything the live tray needs from one walk of the event ring.
+///
+/// `ratePerMin` + `rateInWindow` + `trace` answer three questions from the
+/// same events and scan them three times. The tick fires every 5 seconds
+/// whether the panel is open or not, so the store takes the single pass and
+/// derives the rates from the totals. Keyed by the raw tail client id
+/// ("claude-code"); the Model layer normalizes.
+public struct LiveSnapshot: Equatable, Sendable {
+    /// Per-(client, agent, model) rollup over the full window.
+    public var buckets: [TraceBucket]
+    /// Per-client totals over the trailing 60s — the animation rate.
+    public var recentTokensByClient: [String: Int64]
+    /// Per-client totals over the full window — the tray-title rate.
+    public var windowTokensByClient: [String: Int64]
+
+    public init(buckets: [TraceBucket],
+                recentTokensByClient: [String: Int64],
+                windowTokensByClient: [String: Int64]) {
+        self.buckets = buckets
+        self.recentTokensByClient = recentTokensByClient
+        self.windowTokensByClient = windowTokensByClient
+    }
+}
+
 /// Per-file tail state (usage_tail.rs:64-91).
 struct TailFileState {
     var offset: UInt64
@@ -649,6 +673,47 @@ public actor UsageTailer {
         }
         out.sort { $0.tokens > $1.tokens }
         return out
+    }
+
+    /// `trace` + the two per-client totals in a single pass. The rate window
+    /// is fixed at 60s to match `ratePerMin`; `windowSecs` covers the buckets
+    /// and the tray-title total, exactly like `trace` and `rateInWindow`.
+    /// Reading one `now()` for all three also keeps them mutually consistent,
+    /// which three separate actor hops do not guarantee.
+    public func liveSnapshot(windowSecs: Int64) -> LiveSnapshot {
+        let nowMs = now()
+        let cutoff = nowMs - windowSecs * 1000
+        let recentCutoff = nowMs - 60 * 1000
+        struct Key: Hashable { let client, agent, model: String }
+        // One dictionary, carrying the 60s subtotal alongside the window
+        // totals. Hashing per event is the expensive part of this loop, so
+        // the per-client rollups are folded out of `groups` afterwards —
+        // there are a handful of groups and thousands of events.
+        var groups: [Key: (tokens: Int64, messages: Int, recent: Int64)] = [:]
+        for e in events where e.tsMs >= cutoff {
+            let key = Key(client: e.client, agent: e.agent, model: e.model)
+            var slot = groups[key] ?? (0, 0, 0)
+            slot.tokens += e.total
+            slot.messages += 1
+            if e.tsMs >= recentCutoff { slot.recent += e.total }
+            groups[key] = slot
+        }
+        let windowMin = max(Float(windowSecs) / 60.0, 1.0 / 60.0)
+        var recent: [String: Int64] = [:]
+        var window: [String: Int64] = [:]
+        var out: [TraceBucket] = []
+        out.reserveCapacity(groups.count)
+        for (key, slot) in groups {
+            window[key.client, default: 0] += slot.tokens
+            if slot.recent > 0 { recent[key.client, default: 0] += slot.recent }
+            out.append(TraceBucket(
+                client: key.client, agent: key.agent, model: key.model,
+                tokens: slot.tokens, messages: slot.messages,
+                tokensPerMin: Double(Float(slot.tokens) / windowMin)))
+        }
+        out.sort { $0.tokens > $1.tokens }
+        return LiveSnapshot(buckets: out, recentTokensByClient: recent,
+                            windowTokensByClient: window)
     }
 
     /// Snapshot of the raw event ring (for the tail-sim/tail-live dumps).

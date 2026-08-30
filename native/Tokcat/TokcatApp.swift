@@ -138,6 +138,13 @@ final class AppMain {
                     .removeDuplicates()
                     .sink { rate in store.liveTokensPerMin = rate }
                     .store(in: &Self.cancellables)
+                // Both live rates are usage readings, so an agent hidden from
+                // usage must not move them. The set changes only when the
+                // user flips a switch, so this costs nothing per tick.
+                store.$clientsHiddenFromUsage
+                    .removeDuplicates()
+                    .sink { hidden in liveTrace.setHiddenClients(hidden) }
+                    .store(in: &Self.cancellables)
                 // OAuth quota → tray plan_percent input.
                 quota.$payload
                     .sink { payload in store.agentUsage = payload }

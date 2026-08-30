@@ -644,3 +644,96 @@ private func snapshot(_ id: String, used: Double) -> AgentUsageSnapshot {
         #expect(third.knownAgents.contains("hermes"))
     }
 }
+
+// `clientsHiddenFromUsage` is the live-tail exclusion set (LiveTraceStore
+// filters the menubar's tokens/min through it). It is deliberately not
+// `agentsHiddenFromUsage`, which is the *display* count and lists only agents
+// with history to hide — an agent with no logs at all can still be burning
+// tokens right now.
+@Suite struct HiddenClientSetTests {
+    @Test @MainActor func theMasterSwitchLandsInTheLiveSetWithNoHistory() {
+        let (store, defaults, suite) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        store.setAgentHidden("codex", true)
+
+        #expect(store.clientsHiddenFromUsage == ["codex"])
+        // Nothing collected, so nothing has a usage surface to count as
+        // hidden for the card's note.
+        #expect(store.agentsHiddenFromUsage.isEmpty)
+    }
+
+    @Test @MainActor func limitsOnlyHidesTheLiveRateOnceInventoryHonoursIt() {
+        let (store, defaults, suite) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        store.seedPayload(payload([
+            ("08-05", [client("claude", tokens: 100, cost: 1.0)]),
+        ]))
+        store.agentUsage = AgentUsagePayload(
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            agents: [snapshot("claude", used: 40)])
+
+        store.setAgentScope("claude", .limitsOnly)
+
+        #expect(store.clientsHiddenFromUsage.contains("claude"))
+        #expect(!store.presentClients.contains("claude"))
+    }
+
+    @Test @MainActor func usageOnlyLeavesTheLiveRateAlone() {
+        let (store, defaults, suite) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        store.seedPayload(payload([
+            ("08-05", [client("claude", tokens: 100, cost: 1.0)]),
+        ]))
+        store.agentUsage = AgentUsagePayload(
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            agents: [snapshot("claude", used: 40)])
+
+        store.setAgentScope("claude", .usageOnly)
+
+        #expect(!store.clientsHiddenFromUsage.contains("claude"))
+    }
+
+    // A stored scope that inventory clamps away must not leak into the live
+    // filter either — the menubar and the chart agree on one predicate.
+    @Test @MainActor func aClampedScopeDoesNotHideTheLiveRate() {
+        let (store, defaults, suite) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // A log-only client: not a quota-tile provider and reporting no
+        // snapshot, so `limits_only` is unreachable and clamps back onto
+        // usage.
+        store.seedPayload(payload([
+            ("08-05", [client("opencode", tokens: 40, cost: 0.4)]),
+        ]))
+        store.setAgentScope("opencode", .limitsOnly)
+
+        #expect(!store.clientsHiddenFromUsage.contains("opencode"))
+        #expect(store.presentClients.contains("opencode"))
+    }
+
+    // Turning the switch back off has to clear the set, or the menubar keeps
+    // dropping an agent the user restored.
+    @Test @MainActor func unhidingClearsTheLiveSet() {
+        let (store, defaults, suite) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        store.setAgentHidden("codex", true)
+        #expect(store.clientsHiddenFromUsage == ["codex"])
+
+        store.setAgentHidden("codex", false)
+        #expect(store.clientsHiddenFromUsage.isEmpty)
+    }
+
+    // The set is seeded in `init`, before the first collector pass: the
+    // tailer publishes rates within seconds of launch and a hidden agent
+    // must not get a free window in the menubar.
+    @Test @MainActor func theSetSurvivesARestartBeforeAnyRefresh() {
+        let suite = "tokcat.tests.hidden-clients.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        DashboardStore(defaults: defaults).setAgentHidden("codex", true)
+
+        let restarted = DashboardStore(defaults: defaults)
+
+        #expect(restarted.clientsHiddenFromUsage == ["codex"])
+    }
+}
