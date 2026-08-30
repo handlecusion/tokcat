@@ -12,6 +12,9 @@ struct UsageBarChart: View {
     let bars: [DayBar]
     let clientIds: [String]
     let stats: Stats
+    /// Overview only: the "N hidden" note. A client tab shows exactly one
+    /// agent, so there is nothing there for the note to be about.
+    var showsHiddenNote = false
 
     @EnvironmentObject private var store: DashboardStore
     @ObservedObject private var keys = CmdHeldObserver.shared
@@ -32,9 +35,10 @@ struct UsageBarChart: View {
                 VStack(alignment: .leading, spacing: 2) {
                     CardHeading(text: title)
                     // 3D shows the whole year, not the last-30-days window.
-                    Text(is3D ? "Full year" : subtitle)
+                    Text(subtitleText)
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
+                        .help(hiddenAgentsHelp)
                 }
                 Spacer()
                 viewToggle
@@ -69,6 +73,28 @@ struct UsageBarChart: View {
     }
 
     private var theme: ThemePalette { Themes.theme(named: store.themeName) }
+
+    // MARK: - Hidden-agent note
+
+    /// The stats in this card are computed over the visible agents only, so
+    /// a filtered total has to say so — otherwise the headline silently
+    /// disagrees with what the user remembers spending. Settings › Agents is
+    /// where it gets changed.
+    private var subtitleText: String {
+        let base = is3D ? "Full year" : subtitle
+        let hidden = store.agentsHiddenFromUsage.count
+        guard showsHiddenNote, hidden > 0 else { return base }
+        return "\(base) · \(hidden) hidden"
+    }
+
+    private var hiddenAgentsHelp: String {
+        let names = store.agentsHiddenFromUsage
+            .map { ClientRegistry.style(for: $0).shortName }
+            .sorted()
+        guard showsHiddenNote, !names.isEmpty else { return "" }
+        return "Excluded from these totals: \(names.joined(separator: ", "))"
+            + "\nChange this in Settings › Agents."
+    }
 
     // Port of the .bar2d-viewtoggle 2D/3D button pair: a bordered pill of two
     // flat buttons where the active one fills with the theme accent (the
@@ -121,9 +147,14 @@ struct UsageBarChart: View {
                     Text(style.shortName)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
+        // Yields space before the title and the filter button do: five long
+        // client names can outgrow the header, and a truncated legend label
+        // costs less than a control pushed past the card's edge.
+        .layoutPriority(-1)
     }
 
     private func axisLabel(_ date: String?) -> some View {

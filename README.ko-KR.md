@@ -91,10 +91,14 @@ SwiftUI 레이어는 이 페이로드를 받아 Overview 대시보드와 클라�
 
 ### Settings 패널
 
-macOS System Settings 스타일의 네이티브 패널 — 메뉴바 타이틀 / 플랜 소스 / Cursor usage 옵트인 / 로그인 시 자동 실행 / 트레이 애니메이션 / Live trace 상세 / 설치된 버전.
+macOS System Settings 스타일의 네이티브 패널 — 메뉴바 타이틀 / 플랜 소스 / Cursor usage 옵트인 / 로그인 시 자동 실행 / 트레이 애니메이션 / Live trace 상세 / 에이전트별 표시 / 설치된 버전. 에이전트마다 토큰 차트와 OAuth quota 타일을 따로 켜거나, 둘 다 끄거나, 한쪽만 남길 수 있습니다.
 
 <p align="center">
   <img src="docs/screenshots/settings.png" alt="Tokcat Settings 패널" width="640" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings-agents.png" alt="Settings › Agents: 에이전트별 usage / limits 표시" width="400" />
 </p>
 
 ### 토큰을 먹고 회전하는 고양이
@@ -122,7 +126,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 | **네이티브 비브런시 + 글래스모피즘** | 투명 SwiftUI 패널 + macOS `sidebar` 머티리얼; 라이트/다크는 시스템 외형을 따름. |
 | **메뉴바 popover 동작** | chromeless 윈도우, 헤더 드래그 영역, 다른 앱 클릭 시 자동 hide. |
 | **테마 선택** | Blue, Purple, Pink, Orange, Green, Graphite palette를 로컬에 저장하고 라이트/다크 모드에 맞춰 적용. |
-| **Settings 패널** | macOS System Settings 스타일 — 스위치 토글, 카드 그룹, 버전 표시. |
+| **Settings 패널** | macOS System Settings 스타일 — 스위치 토글, 카드 그룹, 에이전트별 usage/limits 표시, 버전 표시. |
 | **인앱 자동 업데이트** | Sparkle 2 + EdDSA 서명 appcast. 시작 시 + 1시간마다 silent 체크, 트레이 메뉴의 "Check for Updates…"로 수동 체크. |
 | **로그인 시 자동 실행** | macOS `SMAppService` — Settings에서 활성화하며, 시스템 설정 → 로그인 항목의 실제 상태와 자동으로 맞춰집니다. |
 | **스트릭 & 요약** | 최장/현재 스트릭, 누적 토큰, 누적 비용, 일평균, 최고 사용일. |

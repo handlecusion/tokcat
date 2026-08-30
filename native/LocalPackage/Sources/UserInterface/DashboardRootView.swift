@@ -115,11 +115,13 @@ public struct DashboardRootView: View {
                 subtitle: "Stacked by agent",
                 bars: store.overviewBars,
                 clientIds: store.presentClients,
-                stats: stats)
+                stats: stats,
+                showsHiddenNote: true)
             AgentLimitsCard(
-                clients: store.presentClients,
+                clients: store.limitsClients,
                 agentUsage: store.visibleAgentUsage,
-                liveClientIds: liveClientIds)
+                liveClientIds: liveClientIds,
+                hiddenAgentNames: hiddenLimitNames)
             UsageTraceCard(
                 buckets: liveTrace.trace,
                 windowSecs: LiveTraceStore.traceWindowSecs,
@@ -128,22 +130,43 @@ public struct DashboardRootView: View {
         }
     }
 
+    /// Display names of the agents currently withheld from the limits
+    /// surface, for the card's "N hidden" note.
+    private var hiddenLimitNames: [String] {
+        store.agentsHiddenFromLimits
+            .map { ClientRegistry.style(for: $0).shortName }
+            .sorted()
+    }
+
+    // A tab survives while the agent reaches either surface, so each half of
+    // the stack is conditional: an agent narrowed to limits has no history to
+    // chart, and one narrowed to usage has no quota tile to show. Rendering
+    // them anyway would put an empty card under a tab the user just narrowed.
     private func clientStack(_ clientId: String, stats: Stats) -> some View {
         VStack(spacing: 12) {
-            AgentLimitsCard(
-                clients: [clientId],
-                agentUsage: store.visibleAgentUsage,
-                liveClientIds: liveClientIds,
-                title: "\(ClientRegistry.style(for: clientId).displayName) limits",
-                note: "Session / weekly / model limits",
-                includeUnlistedAgents: false)
-            UsageBarChart(
-                title: "Token Usage",
-                subtitle: "Local token history",
-                bars: store.activeBars,
-                clientIds: [clientId],
-                stats: stats)
-            StreaksCard(streaks: stats.streaks)
+            if !store.isAgentHiddenFromLimits(clientId) {
+                AgentLimitsCard(
+                    clients: [clientId],
+                    agentUsage: store.visibleAgentUsage,
+                    liveClientIds: liveClientIds,
+                    title: "\(ClientRegistry.style(for: clientId).displayName) limits",
+                    note: "Session / weekly / model limits",
+                    includeUnlistedAgents: false)
+            }
+            // `presentClients` is already the year's usage clients minus the
+            // ones hidden from that surface, so it answers both questions at
+            // once: an agent whose logs are all in another year would
+            // otherwise get an empty chart and a zeroed streaks card under a
+            // tab it only owns because of its limits tile.
+            if store.presentClients.contains(clientId) {
+                UsageBarChart(
+                    title: "Token Usage",
+                    subtitle: "Local token history",
+                    bars: store.activeBars,
+                    clientIds: [clientId],
+                    stats: stats)
+                StreaksCard(streaks: stats.streaks)
+            }
         }
     }
 

@@ -109,10 +109,14 @@ Orthographic isometric projection with orbit controls and persistent camera stat
 
 ### Menubar settings
 
-A native System Settings-styled panel for the menu-bar title, plan source, Cursor usage opt-in, launch-at-login, animated tray icon, Live trace detail, and the installed version. The dashboard header also includes a theme picker, refresh button, and year selector.
+A native System Settings-styled panel for the menu-bar title, plan source, Cursor usage opt-in, launch-at-login, animated tray icon, Live trace detail, per-agent visibility, and the installed version. Each agent can stay on both surfaces, the token chart only, or the OAuth quota tile only — or be switched off entirely. The dashboard header also includes a theme picker, refresh button, and year selector.
 
 <p align="center">
   <img src="docs/screenshots/settings.png" alt="Tokcat Settings panel" width="640" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings-agents.png" alt="Settings › Agents: per-agent usage and limits visibility" width="400" />
 </p>
 
 ### A cat that eats tokens and spins
@@ -140,7 +144,7 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 | **Native vibrancy + glassmorphism** | Transparent SwiftUI panel over a macOS `sidebar` `NSVisualEffectView`; light/dark follows the system appearance. |
 | **Menubar popover behavior** | Chromeless window, drag region on the header, auto-hides when focus leaves the app. |
 | **Theme picker** | Blue, Purple, Pink, Orange, Green, and Graphite palettes persist locally and adapt to light/dark mode. |
-| **Settings panel** | macOS System Settings-styled preferences with switch toggles, sectioned groups, version info, and one-click update check. |
+| **Settings panel** | macOS System Settings-styled preferences with switch toggles, sectioned groups, per-agent usage/limits visibility, version info, and one-click update check. |
 | **In-app updater** | Sparkle 2 with an EdDSA-signed appcast. Silent check on launch and hourly after that; manual check from the tray menu's "Check for Updates…". |
 | **Launch at login** | macOS `SMAppService` — opt-in via Settings, and the toggle reconciles itself with System Settings → Login Items. |
 | **Live session** | 10-minute tokens/min breakdown by client, with an optional split by agent and model. |

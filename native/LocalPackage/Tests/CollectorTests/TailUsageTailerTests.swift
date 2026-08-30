@@ -491,3 +491,82 @@ extension UsageTailer {
         files[path] = state
     }
 }
+
+// `liveSnapshot` replaced three separate walks of the event ring
+// (ratePerMin + rateInWindow + trace) with one, so the tick that fires every
+// 5 seconds — panel open or not — does a third of the work. It has to agree
+// with the three it stands in for, down to the Float round-trip the tray
+// title formats.
+@Suite struct TailLiveSnapshotTests {
+    private func loadedTailer() async throws -> (UsageTailer, [String]) {
+        let claudePath = tailTempFile("snapshot-claude")
+        let grokPath = tailTempFile("snapshot-grok")
+        try [claudeAssistantLine("msg_a", "req_a"),
+             claudeAssistantLine("msg_b", "req_b")]
+            .joined(separator: "\n")
+            .write(toFile: claudePath, atomically: true, encoding: .utf8)
+        try [grokLine(700, "grok-4", nowMs()), grokLine(1300, "grok-4", nowMs())]
+            .joined(separator: "\n")
+            .write(toFile: grokPath, atomically: true, encoding: .utf8)
+
+        let tailer = UsageTailer()
+        for (path, kind) in [(claudePath, TailClientKind.claude),
+                             (grokPath, TailClientKind.grok)] {
+            let size = UInt64(try FileManager.default
+                .attributesOfItem(atPath: path)[.size] as! Int)
+            _ = await tailer.readGrowth(
+                path: path, client: kind, start: 0, end: size, mtimeMs: nowMs())
+        }
+        return (tailer, [claudePath, grokPath])
+    }
+
+    @Test func matchesTheThreeCallsItReplaces() async throws {
+        let (tailer, paths) = try await loadedTailer()
+        defer { for p in paths { try? FileManager.default.removeItem(atPath: p) } }
+
+        let snapshot = await tailer.liveSnapshot(windowSecs: 600)
+        #expect(snapshot.buckets == (await tailer.trace(windowSecs: 600)))
+
+        let windowTotal = snapshot.windowTokensByClient.values.reduce(0, +)
+        #expect(Double(Float(windowTotal) / 10.0)
+            == (await tailer.rateInWindow(600)))
+        let recentTotal = snapshot.recentTokensByClient.values.reduce(0, +)
+        #expect(Double(Float(recentTotal)) == (await tailer.ratePerMin()))
+    }
+
+    // The per-client totals are the point: they are what lets the menubar
+    // drop a hidden agent without a second pass.
+    @Test func totalsAreKeyedByRawTailClientId() async throws {
+        let (tailer, paths) = try await loadedTailer()
+        defer { for p in paths { try? FileManager.default.removeItem(atPath: p) } }
+
+        let snapshot = await tailer.liveSnapshot(windowSecs: 600)
+        #expect(snapshot.windowTokensByClient["claude-code"] == 40)
+        // grok's totalTokens is cumulative, so the tailer banks 700 + 600.
+        #expect(snapshot.windowTokensByClient["grok"] == 1300)
+        #expect(snapshot.recentTokensByClient == snapshot.windowTokensByClient)
+    }
+
+    // Events older than 60s stay in the 600s totals but leave the 60s ones,
+    // which is what keeps the cat's speed and the tray number different
+    // signals rather than the same one twice.
+    @Test func theRecentWindowIsNarrowerThanTheFullOne() async throws {
+        let path = tailTempFile("snapshot-aged")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        // Cumulative totals: 500 banked five minutes ago, 400 just now.
+        try [grokLine(500, "grok-4", nowMs() - 300_000),
+             grokLine(900, "grok-4", nowMs())]
+            .joined(separator: "\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+
+        let tailer = UsageTailer()
+        let size = UInt64(try FileManager.default
+            .attributesOfItem(atPath: path)[.size] as! Int)
+        _ = await tailer.readGrowth(
+            path: path, client: .grok, start: 0, end: size, mtimeMs: nowMs())
+
+        let snapshot = await tailer.liveSnapshot(windowSecs: 600)
+        #expect(snapshot.windowTokensByClient["grok"] == 900)
+        #expect(snapshot.recentTokensByClient["grok"] == 400)
+    }
+}

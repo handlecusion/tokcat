@@ -41,17 +41,30 @@ enum OmpParser: UsageParser {
 /// the `TOKCAT_CODEX_HOMES` escape hatch.
 func ompAgentHomes() -> [String] {
     let env = ProcessInfo.processInfo.environment
+    // Env values are trimmed, not just emptiness-checked: a stray space from a
+    // shell export or a dotenv file would otherwise build a path that never
+    // resolves and silently drop every omp session.
+    func trimmedEnv(_ key: String) -> String? {
+        guard let raw = env[key] else { return nil }
+        let value = rustTrim(raw)
+        return value.isEmpty ? nil : value
+    }
     var homes: [String] = []
-    if let dir = env["PI_CODING_AGENT_DIR"], !rustTrim(dir).isEmpty {
+    if let dir = trimmedEnv("PI_CODING_AGENT_DIR") {
         homes.append(dir)
     } else if let home = homeDir() {
-        let configRoot = env["PI_CONFIG_DIR"].flatMap { rustTrim($0).isEmpty ? nil : $0 } ?? ".omp"
-        homes.append(joinPath(joinPath(home, configRoot), "agent"))
+        let configRoot = trimmedEnv("PI_CONFIG_DIR") ?? ".omp"
+        // Documented as a name under home, but an absolute path is the
+        // obvious misreading of "config dir" — honor it rather than
+        // concatenating it onto $HOME.
+        let root = configRoot.hasPrefix("/") ? configRoot : joinPath(home, configRoot)
+        homes.append(joinPath(root, "agent"))
     }
     if let extra = env["TOKCAT_OMP_HOMES"] {
         homes.append(
             contentsOf: extra.split(separator: ":", omittingEmptySubsequences: true)
-                .map(String.init))
+                .map { rustTrim(String($0)) }
+                .filter { !$0.isEmpty })
     }
     return homes
 }
