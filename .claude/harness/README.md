@@ -63,7 +63,11 @@
    (`add_issue_comment`, `issue_write`, `create_pull_request`, `pull_request_review_write`, …)로 쓴다.
 
 5. **루틴 (PR 자동 리뷰)**: https://claude.ai/code/routines/trig_01BswRvckXcbV6xSM9CkLQxQ — "tokcat · PR auto-review".
-   GitHub 트리거 `pull_request.opened` / `ready_for_review` (Claude GitHub App 웹훅, Actions 불필요).
+   GitHub 트리거 `pull_request.opened` (Claude GitHub App 웹훅, Actions 불필요).
+   **실측 제약(2026-08-31)**: 구독을 걸어도 `ready_for_review`·`reopened`는 세션을 만들지 않았고
+   `opened`만 전달됐다(#75–#79에서 5/5). 즉 **웹훅 생성 이전에 열린 PR과 draft→ready 전환 PR은
+   자동 리뷰가 붙지 않는다** — 필요하면 리뷰 세션 링크 없이 사람이 보거나, 새 PR로 다시 연다.
+   또 웹훅 발화에는 시간당 상한이 있어(프리뷰) 몰리면 조용히 드롭된다.
    PR이 열리면 세션이 diff를 읽고 **COMMENT 리뷰**(인라인 + 총평, 마커 `kind=REVIEW`)를 남긴다.
    승인/변경요청은 절대 하지 않는다(머지 게이트와 분리). 프리뷰 기간엔 웹훅 발화에 시간당 상한이 있다.
    **트러스트 경계**: 같은 저장소 PR은 워크스페이스가 PR 헤드로 체크아웃된 채 시작되므로, 리뷰 세션은
