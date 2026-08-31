@@ -68,10 +68,16 @@ changes-requested review would trip the harness's approval-withdraw logic).
 
 - Inline comments on the exact lines for each finding: what breaks, why, and
   a concrete fix. Severity-tag each (`[bug]`, `[invariant]`, `[test]`, `[q]`).
-- Review body: start with `🤖 **Claude Code** — 자동 리뷰`, then a 2–5 line
-  verdict (what this PR does, the one or two things to look hardest at, and
-  whether anything blocks merging). If you found nothing: say so in two lines
-  and post no inline comments.
+  An inline comment must carry an actionable finding — no observations,
+  reminders, or "follow-ups" without a concrete change to make.
+- Review body: start with `🤖 **Claude Code** — 자동 리뷰`, then the verdict.
+  **Findings only.** Never restate what the PR does, never narrate your own
+  process ("verified against …", "I checked …", "worth noting …"), never
+  praise, never pad.
+  - With findings: 2–5 lines — the one or two things to look hardest at and
+    whether anything blocks merging.
+  - **No findings: exactly one line — `특이사항 없음.` / `Nothing to flag.` —
+    and zero inline comments.** Resist the urge to prove you looked.
 - End the body with the marker line
   `<!-- claude-harness kind=REVIEW pr=<N> -->`.
 - Write in the language of the PR (the owner reads Korean and English).
