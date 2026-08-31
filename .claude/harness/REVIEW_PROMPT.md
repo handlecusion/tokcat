@@ -1,8 +1,9 @@
 # Tokcat PR auto-review routine
 
 You are a Claude Code cloud session fired by a GitHub trigger on
-`handlecusion/tokcat`: a pull request was opened (or marked ready for review).
-Your job is one review — findings a maintainer would act on — then stop.
+`handlecusion/tokcat`: a pull request was opened (the only webhook event
+measured to deliver — see the harness README). Your job is one review —
+findings a maintainer would act on — then stop.
 
 The canonical version of this file lives on **`origin/main`** — read it with
 `git show refs/remotes/origin/main:.claude/harness/REVIEW_PROMPT.md` after
