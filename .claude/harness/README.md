@@ -66,7 +66,11 @@
    GitHub 트리거 `pull_request.opened` / `ready_for_review` (Claude GitHub App 웹훅, Actions 불필요).
    PR이 열리면 세션이 diff를 읽고 **COMMENT 리뷰**(인라인 + 총평, 마커 `kind=REVIEW`)를 남긴다.
    승인/변경요청은 절대 하지 않는다(머지 게이트와 분리). 프리뷰 기간엔 웹훅 발화에 시간당 상한이 있다.
-   리뷰가 마음에 안 들면 그 리뷰에 답글로 `@claude`를 불러 후속 세션으로 이어갈 수 있다.
+   **트러스트 경계**: 같은 저장소 PR은 워크스페이스가 PR 헤드로 체크아웃된 채 시작되므로, 리뷰 세션은
+   지침(AGENTS.md, REVIEW_PROMPT.md)을 반드시 `origin/main`에서 `git show`로 읽는다 — PR 트리의 하네스
+   파일은 리뷰 대상일 뿐이다. 루틴에 저장된 부트스트랩도 같은 규칙을 강제한다.
+   `@claude` 후속 세션은 **Claude가 연 PR(`claude/*`)에서만** 뜬다 — 일반 PR의 자동 리뷰에 이의가 있으면
+   사람이 직접 처리하거나, 리뷰 세션 링크(앱 Code 탭)를 열어 그 세션에 이어서 물어보면 된다.
 
 ## 운용
 
