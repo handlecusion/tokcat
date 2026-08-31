@@ -121,6 +121,8 @@ Owner-only automation, documented in `.claude/harness/README.md`:
 - Merge gate (`claude-merge-gate.yml`): owner approval (review **Approve**, or the
   `approved` label for Claude's own PRs) enables auto-merge; the `protect-main`
   ruleset requires the three CI jobs, so nothing lands before CI is green.
+- Every opened PR also gets an automatic COMMENT review from a second routine
+  (`.claude/harness/REVIEW_PROMPT.md`) via a GitHub trigger — it never approves.
 - Secrets: `CLAUDE_ROUTINE_FIRE_URL`, `CLAUDE_ROUTINE_FIRE_TOKEN` (per-routine
   token; it can only fire that routine). No Claude credentials on runners.
 - Sessions write to GitHub as the owner *via the Claude GitHub App*

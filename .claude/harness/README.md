@@ -38,13 +38,14 @@
 | `.github/workflows/claude-merge-gate.yml` | 오너 승인(리뷰 Approve / `approved` 라벨) → auto-merge. 라벨 제거·변경 요청·새 푸시 시 해제. 머지되면 연결 이슈를 닫고 라벨 정리 |
 | `scripts/claude-harness/build-payload.py` | 이슈/PR + 토론 + 문서·스펙을 한 텍스트로 조립 |
 | `scripts/claude-harness/fire.sh` | `/fire` 호출, 429/5xx 재시도, 세션 ID/URL 출력 |
-| `.claude/harness/ROUTINE_PROMPT.md` | 세션이 따르는 지침의 원본. 클론에 있으면 claude.ai에 저장된 사본보다 우선 |
+| `.claude/harness/ROUTINE_PROMPT.md` | 이슈 위임 세션이 따르는 지침의 원본. 클론에 있으면 claude.ai에 저장된 사본보다 우선 |
+| `.claude/harness/REVIEW_PROMPT.md` | PR 자동 리뷰 세션의 지침 원본 (같은 우선순위 규칙) |
 
 라벨: `claude`(트리거, 오너 전용) · `claude:running` · `claude:needs-info` · `claude:pr-open` · `approved`(머지 게이트, 오너 전용)
 
 ## 1회 설정
 
-1. **루틴**: https://claude.ai/code/routines/trig_01QJ58u3U5nURAPzWJtXytGp — "tokcat · Claude harness (issue delegation)".
+1. **루틴 (이슈 위임)**: https://claude.ai/code/routines/trig_01QJ58u3U5nURAPzWJtXytGp — "tokcat · Claude harness (issue delegation)".
    저장소 `handlecusion/tokcat`, 모델 `claude-opus-5`, 환경 `askai`(Trusted 네트워크; GitHub는 프록시 경유).
    저장된 프롬프트는 `ROUTINE_PROMPT.md`의 스냅샷이고, 클론에 이 파일이 있으면 파일이 우선한다.
    파일을 고치면 루틴의 스냅샷도 같은 내용으로 갱신해 둘 것(웹 편집 또는 CLI `/schedule update`).
@@ -60,6 +61,12 @@
 4. 세션이 GitHub에 쓰려면 claude.ai 계정에 GitHub이 연결돼 있어야 한다 (Claude GitHub App — 2026-08-30 연결 완료,
    앱은 `handlecusion` 계정 전체 저장소에 설치됨). 클라우드 VM에는 `gh`가 **없고** 내장 GitHub MCP 도구
    (`add_issue_comment`, `issue_write`, `create_pull_request`, `pull_request_review_write`, …)로 쓴다.
+
+5. **루틴 (PR 자동 리뷰)**: https://claude.ai/code/routines/trig_01BswRvckXcbV6xSM9CkLQxQ — "tokcat · PR auto-review".
+   GitHub 트리거 `pull_request.opened` / `ready_for_review` (Claude GitHub App 웹훅, Actions 불필요).
+   PR이 열리면 세션이 diff를 읽고 **COMMENT 리뷰**(인라인 + 총평, 마커 `kind=REVIEW`)를 남긴다.
+   승인/변경요청은 절대 하지 않는다(머지 게이트와 분리). 프리뷰 기간엔 웹훅 발화에 시간당 상한이 있다.
+   리뷰가 마음에 안 들면 그 리뷰에 답글로 `@claude`를 불러 후속 세션으로 이어갈 수 있다.
 
 ## 운용
 
