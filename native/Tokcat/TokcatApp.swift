@@ -155,6 +155,13 @@ final class AppMain {
                     .removeDuplicates()
                     .sink { detailed in liveTrace.setDetailedTrace(detailed) }
                     .store(in: &Self.cancellables)
+                // Same Cursor opt-in as the historical event cache: live
+                // polling is another cursor.com/api2.cursor.sh call.
+                store.$settings
+                    .map(\.cursorUsage)
+                    .removeDuplicates()
+                    .sink { enabled in liveTrace.setCursorLiveEnabled(enabled) }
+                    .store(in: &Self.cancellables)
 
                 store.start()
                 liveTrace.start()

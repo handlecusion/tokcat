@@ -58,4 +58,15 @@ private func row(_ client: String, _ agent: String, _ model: String,
     @Test func emptyInputYieldsEmptyOutput() {
         #expect(TraceCollapse.collapseByClient([]).isEmpty)
     }
+
+    @Test func compactCollapseSaturatesManyCeilingRows() {
+        let perRow: Int64 = 4_000_000_000_000_000
+        let rows = (0..<2400).map { i in
+            row("cursor", "main", "m\(i)", tokens: perRow, rate: 1)
+        }
+        let collapsed = TraceCollapse.collapseByClient(rows)
+        #expect(collapsed.count == 1)
+        #expect(collapsed[0].client == "cursor")
+        #expect(collapsed[0].tokens == Int64.max)
+    }
 }

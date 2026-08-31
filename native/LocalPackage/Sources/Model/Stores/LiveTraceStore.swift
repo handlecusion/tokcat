@@ -36,14 +36,27 @@ public final class LiveTraceStore: ObservableObject {
     @Published public private(set) var detailedTrace: Bool = false
 
     private let tailer: UsageTailer
+    private let cursorLive: CursorLiveProvider
     private var tickTask: Task<Void, Never>?
     private var hiddenClients: Set<String> = []
     /// Kept so a Settings change can recompute the rates without waiting for
     /// the next tick. One snapshot, not a history.
     private var lastSnapshot: LiveSnapshot?
+    private var cursorLiveEnabled = false
+    /// True after `start()` and until `stop()`. Independent of the
+    /// opt-in so a store that has not started never polls.
+    private var storeStarted = false
+    private var cursorLiveRevision: UInt64 = 0
 
     public init(tailer: UsageTailer = UsageTailer()) {
         self.tailer = tailer
+        self.cursorLive = CursorLiveProvider(tailer: tailer)
+    }
+
+    /// Test seam: inject a provider so enable/disable races can be observed.
+    init(tailer: UsageTailer, cursorLive: CursorLiveProvider) {
+        self.tailer = tailer
+        self.cursorLive = cursorLive
     }
 
     public func setDetailedTrace(_ detailed: Bool) {
@@ -63,8 +76,21 @@ public final class LiveTraceStore: ObservableObject {
         if let lastSnapshot { publish(lastSnapshot) }
     }
 
+    /// Same opt-in as the historical Cursor event cache. Off: no Cursor
+    /// live polls. On: start the adaptive poller.
+    ///
+    /// Each call hops back to the main actor and re-reads the *latest*
+    /// flags before talking to the provider, so a stale `start()` cannot
+    /// outrun a later opt-out.
+    public func setCursorLiveEnabled(_ enabled: Bool) {
+        cursorLiveEnabled = enabled
+        syncCursorLive()
+    }
+
     /// Start the 5s tick loop (immediate first tick). Idempotent.
     public func start() {
+        storeStarted = true
+        syncCursorLive()
         guard tickTask == nil else { return }
         tickTask = Task { [weak self, tailer] in
             while !Task.isCancelled {
@@ -118,7 +144,20 @@ public final class LiveTraceStore: ObservableObject {
     }
 
     public func stop() {
+        storeStarted = false
         tickTask?.cancel()
         tickTask = nil
+        syncCursorLive()
+    }
+
+    private func syncCursorLive() {
+        cursorLiveRevision += 1
+        let revision = cursorLiveRevision
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard revision == self.cursorLiveRevision else { return }
+            let want = self.storeStarted && self.cursorLiveEnabled
+            await self.cursorLive.setEnabled(want, revision: revision)
+        }
     }
 }

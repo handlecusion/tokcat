@@ -75,8 +75,8 @@ Tokcat is built for the category searches people actually type when AI coding bi
 | **Glanceable** | The menu bar title is configurable: today's tokens, today's cost, total tokens, total cost, live tokens/min, plan usage percent, or icon-only. |
 | **Native** | Swift and SwiftUI end to end — `NSVisualEffectView` vibrancy, system fonts, SceneKit for the 3D graph, and light/dark adaptation from the system appearance. No web view, no JavaScript runtime. |
 | **Quiet** | Lives in the menu bar — no Dock icon, no spurious notifications, auto-hides when you click another app. |
-| **Honest** | Usage history comes from local session logs read on-device. No telemetry, no analytics, no cloud sync, no Tokcat account. |
-| **Multi-client** | Tokcat reads Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi logs. |
+| **Honest** | Usage history comes from local session logs read on-device, except opt-in Cursor usage from cursor.com. No telemetry, no analytics, no cloud sync, no Tokcat account. |
+| **Multi-client** | Tokcat reads Claude Code, Codex CLI, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi logs, plus opt-in Cursor usage. |
 | **Cat** | The menubar cat eats your tokens and spins faster the more it digests — your token throughput as a single, glanceable critter. |
 
 ---
@@ -85,7 +85,7 @@ Tokcat is built for the category searches people actually type when AI coding bi
 
 Tokcat reads local usage logs in-process from its Swift collector layer. On demand from the tray menu, and on a 30-minute background refresh for the popover chart, it scans supported client stores, deduplicates streaming retries, normalizes token fields, estimates cost from a bundled model-price table when the source log does not include cost, and caches the graph payload in memory and on disk.
 
-For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. The same signal can drive the menu-bar title, the Live session card, and the adaptive tray animation.
+For live activity, a JSONL tailer tracks recent growth in supported session logs and turns it into a 10-minute tokens/min signal. Cursor has no local billed-token ledger, so the same Live session card can also include Cursor when Settings → Cursor usage is on: Tokcat polls Cursor's aggregated usage endpoint on an adaptive interval (15–120s, 300s after repeated 429s, paused when Cursor IDE and Cursor CLI are both quit) and diffs the totals. The same signal can drive the menu-bar title, the Live session card, and the adaptive tray animation.
 
 For agent-limit cards, Tokcat reads existing Codex, Claude, and Grok Build OAuth credentials plus Cursor's local session token, and asks those vendors' usage endpoints for quota windows. Those direct vendor calls are separate from the local usage history and are not telemetry.
 
@@ -149,7 +149,7 @@ Pick between two styles in Settings: the spinning cat or a party parrot. During 
 | **Launch at login** | macOS `SMAppService` — opt-in via Settings, and the toggle reconciles itself with System Settings → Login Items. |
 | **Live session** | 10-minute tokens/min breakdown by client, with an optional split by agent and model. |
 | **Streaks & summaries** | Longest / current streak, total tokens, total cost, daily average, best day. |
-| **No telemetry** | Usage history stays local. Network calls are limited to signed update checks and direct Codex/Claude/Grok quota lookups when credentialed. |
+| **No telemetry** | Usage history stays local. Network calls are limited to signed update checks, direct Codex/Claude/Grok/Cursor quota lookups when credentialed, and opt-in Cursor usage (history backfill plus live polling). |
 
 ---
 
@@ -178,7 +178,7 @@ After installation, launch **Tokcat** from `/Applications`. Click the cat in the
 |---|---|
 | Menubar title | What the menu-bar text shows next to the icon, including live tokens/min and plan usage percent. |
 | Plan source | Shown when the title is set to plan usage: which provider (Auto, Claude, Codex, Grok, Cursor) and which quota window to pin, and whether to show % used or % left. |
-| Cursor usage → Fetch from cursor.com | Off by default. When on, Tokcat backfills per-event Cursor history from cursor.com and gives Cursor its own tab. |
+| Cursor usage → Fetch from cursor.com | Off by default. When on, Tokcat backfills per-event Cursor history from cursor.com, gives Cursor its own tab, and polls live usage for the Live session card. Polling pauses when Cursor IDE and Cursor CLI are both quit. |
 | Launch at login | Starts Tokcat automatically when you log in (`SMAppService`). |
 | Menubar icon → Animate based on token usage | Spinning cat or party parrot animation that reflects token velocity. |
 | Live trace → Split by agent / model | Expands the Live trace card from one row per client into per-agent and per-model rows. |
@@ -201,7 +201,7 @@ Cursor is a special case: its tab only appears while Settings → Cursor usage �
 
 Limit cards use local OAuth credentials from Codex, Claude, and Grok Build. Run `codex login`, `claude`, or `grok login` to refresh those credentials, then choose Refresh Now. API-key-only Codex auth can still produce local token history, but OAuth usage limits require OAuth login. Cursor's card reads the session token Cursor stores locally — if it says the session expired, open Cursor and sign in again.
 
-Cursor's limit card is separate from Settings → Cursor usage. That toggle backfills the contribution graph with per-event history from cursor.com; the plan percentage needs no toggle.
+Cursor's limit card is separate from Settings → Cursor usage. That toggle backfills the contribution graph with per-event history from cursor.com and enables live-session polling; the plan percentage needs no toggle.
 
 **The menu-bar window vanishes when I click anywhere**
 
@@ -242,7 +242,7 @@ Tokcat 0.2.0 and later require macOS 13 (Ventura). On macOS 11 or 12, stay on `v
 
 ### What is Tokcat?
 
-Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Written in Swift and SwiftUI, it reads local sessions from Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a universal DMG from GitHub Releases, and runs on Apple Silicon and Intel Macs with macOS 13 or newer.
+Tokcat is a free, open-source native macOS menu-bar app that visualizes your AI coding token usage as a 2D stacked chart and 3D GitHub-style contribution graph. Written in Swift and SwiftUI, it reads local sessions from Claude Code, Codex CLI, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi, plus opt-in Cursor usage from cursor.com, in one glanceable place. Tokcat makes zero analytics requests, requires no Tokcat account, and reads token history from local session logs except for that Cursor opt-in. The app is MIT-licensed, distributed via Homebrew (`brew install --cask handlecusion/tokcat/tokcat`) and as a universal DMG from GitHub Releases, and runs on Apple Silicon and Intel Macs with macOS 13 or newer.
 
 ### How much does Tokcat cost?
 
@@ -250,11 +250,11 @@ Tokcat is free and open-source under the MIT licence. There is no subscription, 
 
 ### Which AI coding tools does Tokcat track?
 
-Tokcat tracks **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi** from local logs. New client formats are added as parsers in Tokcat's Swift `Collector` module.
+Tokcat tracks **Claude Code, OpenAI Codex CLI, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, and Oh My Pi** from local logs, and **Cursor IDE** when Settings → Cursor usage is on. New client formats are added as parsers in Tokcat's Swift `Collector` module.
 
 ### Does Tokcat send my data anywhere?
 
-Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It does make network requests for two explicit product functions: Sparkle update checks against `https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml`, and direct Codex/Claude/Grok/Cursor quota lookups against those vendors when local credentials are available. Token-usage history is read locally from session logs.
+Tokcat does not send usage history to Tokcat servers and has no telemetry, analytics, cloud sync, or Tokcat account. It does make network requests for three explicit product functions: Sparkle update checks against `https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml`; direct Codex/Claude/Grok/Cursor quota lookups against those vendors when local credentials are available; and, when Settings → Cursor usage is on, Cursor history backfill plus live aggregated-usage polls. Token-usage history for every other client is read locally from session logs.
 
 ### How is Tokcat different from CLI token-usage tools?
 
