@@ -25,12 +25,12 @@ Therefore:
 
 ```sh
 # Pin main to a named ref — a later fetch would overwrite FETCH_HEAD.
-git fetch origin main:refs/remotes/origin/main
+git fetch origin +main:refs/remotes/origin/main
 git show refs/remotes/origin/main:.claude/harness/REVIEW_PROMPT.md   # canonical instructions
 git show refs/remotes/origin/main:AGENTS.md                          # canonical invariants
 git diff refs/remotes/origin/main...HEAD                             # the diff you are reviewing
 # fork PR whose head is not checked out:
-git fetch origin "pull/<N>/head:refs/heads/pr-<N>"
+git fetch origin "+pull/<N>/head:refs/heads/pr-<N>"
 git diff refs/remotes/origin/main...pr-<N>
 ```
 
