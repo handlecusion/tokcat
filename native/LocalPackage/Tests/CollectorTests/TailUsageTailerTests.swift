@@ -18,10 +18,14 @@ private func tailTempDir(_ name: String) throws -> URL {
     return dir
 }
 
+// pid + millisecond is not unique: swift-testing runs the tests in a suite
+// in parallel, so two calls with the same `name` can land on one path and
+// one test's cleanup `defer` deletes the file the other is still reading.
 private func tailTempFile(_ name: String) -> String {
     FileManager.default.temporaryDirectory
         .appendingPathComponent(
-            "tokcat-usage-tail-\(name)-\(ProcessInfo.processInfo.processIdentifier)-\(nowMs()).jsonl"
+            "tokcat-usage-tail-\(name)-\(ProcessInfo.processInfo.processIdentifier)"
+                + "-\(nowMs())-\(UInt32.random(in: 0..<UInt32.max)).jsonl"
         ).path
 }
 
