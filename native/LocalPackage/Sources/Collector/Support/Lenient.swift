@@ -18,7 +18,7 @@ func rustAsI64(_ d: Double) -> Int64 {
     return Int64(d)
 }
 
-func satAdd(_ a: Int64, _ b: Int64) -> Int64 {
+public func satAdd(_ a: Int64, _ b: Int64) -> Int64 {
     let (r, overflow) = a.addingReportingOverflow(b)
     if overflow { return b > 0 ? Int64.max : Int64.min }
     return r

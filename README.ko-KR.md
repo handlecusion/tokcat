@@ -61,8 +61,8 @@ brew install --cask handlecusion/tokcat/tokcat
 | **한눈에** | 메뉴바 타이틀에 표시할 항목을 선택할 수 있음 — 오늘의 토큰 / 오늘의 비용 / 전체 토큰 / 전체 비용 / tokens per min / 플랜 사용률 / 아이콘만. |
 | **네이티브** | 전부 Swift + SwiftUI. macOS `NSVisualEffectView` 비브런시, 시스템 폰트, 3D 그래프는 SceneKit, 라이트/다크는 시스템 설정을 따름. 웹뷰도 JS 런타임도 없음. |
 | **조용함** | 메뉴바에만 상주 — Dock 아이콘 없음, 잡 알림 없음, 다른 앱 클릭 시 자동 hide. |
-| **정직함** | 사용량 히스토리는 로컬 세션 로그를 기기 안에서 읽어 산출. 텔레메트리·분석·클라우드 동기화·Tokcat 계정 없음. |
-| **다중 클라이언트** | Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 로그 지원. |
+| **정직함** | 사용량 히스토리는 로컬 세션 로그를 기기 안에서 읽어 산출. Cursor는 Settings → Cursor usage 옵트인 시에만 cursor.com에서 가져온다. 텔레메트리·분석·클라우드 동기화·Tokcat 계정 없음. |
+| **다중 클라이언트** | Claude Code, Codex CLI, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 로그와 옵트인 Cursor usage 지원. |
 | **고양이** | 메뉴바 고양이가 당신의 토큰을 받아먹고 더 많이 소화할수록 빠르게 회전합니다 — 한 마리 생물로 표현된 토큰 처리량. |
 
 ---
@@ -130,7 +130,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 | **인앱 자동 업데이트** | Sparkle 2 + EdDSA 서명 appcast. 시작 시 + 1시간마다 silent 체크, 트레이 메뉴의 "Check for Updates…"로 수동 체크. |
 | **로그인 시 자동 실행** | macOS `SMAppService` — Settings에서 활성화하며, 시스템 설정 → 로그인 항목의 실제 상태와 자동으로 맞춰집니다. |
 | **스트릭 & 요약** | 최장/현재 스트릭, 누적 토큰, 누적 비용, 일평균, 최고 사용일. |
-| **텔레메트리 없음** | 사용량 히스토리는 로컬에 머무릅니다. 네트워크 요청은 서명된 업데이트 확인과 credential이 있을 때의 Codex/Claude/Grok/Cursor quota 조회로 제한됩니다. |
+| **텔레메트리 없음** | 사용량 히스토리는 로컬에 머무릅니다. 네트워크 요청은 서명된 업데이트 확인, credential이 있을 때의 Codex/Claude/Grok/Cursor quota 조회, 그리고 옵트인 Cursor usage(히스토리 백필 + 라이브 폴링)로 제한됩니다. |
 
 ---
 
@@ -159,7 +159,7 @@ Settings에서 두 가지 스타일 선택 가능: 회전하는 고양이 또는
 |---|---|
 | Menubar title | 메뉴바 아이콘 옆에 표시할 텍스트 종류 (tokens per min, 플랜 사용률 포함) |
 | Plan source | 타이틀을 플랜 사용률로 뒀을 때 표시 — 어느 provider(Auto, Claude, Codex, Grok, Cursor)의 어느 window를 고정할지, % used인지 % left인지 |
-| Cursor usage → Fetch from cursor.com | 기본 꺼짐. 켜면 cursor.com에서 이벤트 단위 히스토리를 채워 넣고 Cursor 탭이 생깁니다 |
+| Cursor usage → Fetch from cursor.com | 기본 꺼짐. 켜면 cursor.com에서 이벤트 단위 히스토리를 채워 넣고 Cursor 탭이 생기며, Live session용 라이브 사용량도 폴링합니다. Cursor IDE와 Cursor CLI가 둘 다 꺼져 있으면 폴링을 멈춥니다. |
 | Launch at login | 로그인 시 Tokcat 자동 시작 (`SMAppService`) |
 | Menubar icon → Animate based on token usage | 회전하는 고양이 / party parrot 애니메이션 (토큰 처리량에 비례한 속도) |
 | Live trace → Split by agent / model | Live trace 카드를 클라이언트 한 줄에서 agent·model별 줄로 확장 |
@@ -198,7 +198,7 @@ Cursor는 예외입니다. Settings → Cursor usage → Fetch from cursor.com�
 
 ### Tokcat이 뭔가요?
 
-Tokcat은 AI 코딩 도구의 토큰 사용량을 2D 누적 차트와 3D GitHub 스타일 컨트리뷰션 그래프로 시각화해주는 무료 오픈소스 macOS 메뉴바 앱입니다. Swift와 SwiftUI로 작성됐고, Claude Code, Codex CLI, Cursor IDE, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 세션을 로컬 로그에서 읽어 한 화면에 보여줍니다. 분석 요청을 보내지 않고, Tokcat 계정도 필요 없습니다. MIT 라이선스로 공개되어 있으며, Homebrew(`brew install --cask handlecusion/tokcat/tokcat`) 또는 GitHub Releases의 universal DMG로 배포됩니다. **Apple Silicon 및 Intel Mac, macOS 13 이상** 대상입니다.
+Tokcat은 AI 코딩 도구의 토큰 사용량을 2D 누적 차트와 3D GitHub 스타일 컨트리뷰션 그래프로 시각화해주는 무료 오픈소스 macOS 메뉴바 앱입니다. Swift와 SwiftUI로 작성됐고, Claude Code, Codex CLI, OpenCode, Gemini CLI, Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi 세션을 로컬 로그에서 읽고, Cursor는 Settings → Cursor usage가 켜져 있을 때 cursor.com에서 가져와 한 화면에 보여줍니다. 분석 요청을 보내지 않고, Tokcat 계정도 필요 없습니다. MIT 라이선스로 공개되어 있으며, Homebrew(`brew install --cask handlecusion/tokcat/tokcat`) 또는 GitHub Releases의 universal DMG로 배포됩니다. **Apple Silicon 및 Intel Mac, macOS 13 이상** 대상입니다.
 
 ### 비용이 얼마인가요?
 
@@ -206,11 +206,11 @@ Tokcat은 MIT 라이선스 무료 오픈소스입니다. 구독, 유료 등급, 
 
 ### 어떤 AI 코딩 도구를 추적하나요?
 
-로컬 로그 기준으로 **Claude Code, OpenAI Codex CLI, Cursor IDE, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi**를 추적합니다. 새 클라이언트 포맷은 Swift `Collector` 모듈에 파서로 추가됩니다.
+로컬 로그 기준으로 **Claude Code, OpenAI Codex CLI, OpenCode, Google Gemini CLI, GitHub Copilot CLI, Amp, Droid, Hermes, Grok Build, Oh My Pi**를 추적하고, **Cursor IDE**는 Settings → Cursor usage가 켜져 있을 때 추적합니다. 새 클라이언트 포맷은 Swift `Collector` 모듈에 파서로 추가됩니다.
 
 ### Tokcat은 제 데이터를 어디로 보내나요?
 
-Tokcat 서버로 사용량 히스토리를 보내지 않고, 텔레메트리·분석·클라우드 동기화·Tokcat 계정이 없습니다. 네트워크 요청은 Sparkle 업데이트 확인을 위한 `https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml` 조회와, 로컬 credential이 있을 때 Codex/Claude/Grok/Cursor quota를 직접 조회하는 요청으로 제한됩니다. 토큰 사용 히스토리는 디스크의 세션 로그에서 로컬로 읽습니다.
+Tokcat 서버로 사용량 히스토리를 보내지 않고, 텔레메트리·분석·클라우드 동기화·Tokcat 계정이 없습니다. 네트워크 요청은 Sparkle 업데이트 확인을 위한 `https://github.com/handlecusion/tokcat/releases/latest/download/appcast.xml` 조회, 로컬 credential이 있을 때 Codex/Claude/Grok/Cursor quota를 직접 조회하는 요청, 그리고 Settings → Cursor usage가 켜져 있을 때의 Cursor 히스토리 백필과 라이브 집계 폴링으로 제한됩니다. 다른 클라이언트의 토큰 사용 히스토리는 디스크의 세션 로그에서 로컬로 읽습니다.
 
 ### CLI 토큰 사용량 도구와 어떻게 다른가요?
 

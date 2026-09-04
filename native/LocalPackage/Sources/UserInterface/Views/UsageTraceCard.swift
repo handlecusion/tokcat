@@ -24,6 +24,7 @@ public struct UsageTraceCard: View {
     private static let registryIds: [String: String] = [
         "claude-code": "claude",
         "codex-cli": "codex",
+        "cursor": "cursor",
     ]
 
     private func style(for tailClientId: String) -> ClientStyle {

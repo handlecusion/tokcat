@@ -13,6 +13,8 @@ import Foundation
 // Grok Build:   $GROK_HOME/sessions/**/updates.jsonl
 // oh-my-pi:     ~/.omp/agent/sessions/**/*.jsonl (subagent transcripts are
 //               nested one level deeper, inside the parent session's dir)
+// Cursor:       no local ledger — Model's CursorLiveProvider diffs
+//               GetAggregatedUsageEvents and calls `ingest`.
 
 let tailClientClaude = "claude-code"
 let tailClientCodex = "codex-cli"
@@ -52,7 +54,21 @@ public struct UsageEvent: Codable, Equatable, Sendable {
         case cacheWrite = "cache_write"
     }
 
-    var total: Int64 { input + output + cacheRead + cacheWrite }
+    var total: Int64 {
+        satAdd(satAdd(input, output), satAdd(cacheRead, cacheWrite))
+    }
+
+    public init(tsMs: Int64, client: String, agent: String, model: String,
+                input: Int64, output: Int64, cacheRead: Int64, cacheWrite: Int64) {
+        self.tsMs = tsMs
+        self.client = client
+        self.agent = agent
+        self.model = model
+        self.input = input
+        self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
+    }
 }
 
 /// Per-(client, agent, model) rollup over a trailing window
@@ -648,7 +664,11 @@ public actor UsageTailer {
 
     private func windowTotal(_ secs: Int64) -> Int64 {
         let cutoff = now() - secs * 1000
-        return events.lazy.filter { $0.tsMs >= cutoff }.map(\.total).reduce(0, +)
+        var total: Int64 = 0
+        for event in events where event.tsMs >= cutoff {
+            total = satAdd(total, event.total)
+        }
+        return total
     }
 
     /// Per-(client, agent, model) breakdown over `windowSecs`. The caller
@@ -661,7 +681,7 @@ public actor UsageTailer {
         for e in events where e.tsMs >= cutoff {
             let key = Key(client: e.client, agent: e.agent, model: e.model)
             var slot = groups[key] ?? (0, 0)
-            slot.tokens += e.total
+            slot.tokens = satAdd(slot.tokens, e.total)
             slot.messages += 1
             groups[key] = slot
         }
@@ -719,6 +739,25 @@ public actor UsageTailer {
     /// Snapshot of the raw event ring (for the tail-sim/tail-live dumps).
     public func eventsSnapshot() -> [UsageEvent] {
         events
+    }
+
+    /// Push already-diffed events into the ring. Used by network live
+    /// sources (Cursor) that cannot live inside `tick()` without breaking
+    /// the file-offset / `tailRoots()` contract. Empty `dedupKey` — the
+    /// caller owns uniqueness (snapshot diffs have no event id).
+    @discardableResult
+    public func ingest(_ incoming: [UsageEvent]) -> Int {
+        var added = 0
+        let cutoff = now() - eventWindowSecs * 1000
+        for event in incoming {
+            if event.total <= 0 { continue }
+            // Do not append already-expired rows: trimEvents wipes `seen`
+            // whenever it drops anything, which would break Claude dedup.
+            if event.tsMs < cutoff { continue }
+            if pushEvent(event, dedupKey: "") { added += 1 }
+        }
+        trimEvents()
+        return added
     }
 
     // MARK: - Roots (usage_tail.rs:728-773)

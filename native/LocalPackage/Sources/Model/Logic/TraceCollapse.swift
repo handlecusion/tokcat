@@ -75,7 +75,7 @@ public enum TraceCollapse {
                 agents[b.client] = []
                 models[b.client] = []
             }
-            tokens[b.client]! += b.tokens
+            tokens[b.client] = satAdd(tokens[b.client]!, b.tokens)
             messages[b.client]! += b.messages
             rates[b.client]! += b.tokensPerMin
             agents[b.client]!.insert(b.agent)

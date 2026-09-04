@@ -195,7 +195,7 @@ struct SettingsSheet: View {
         }
     }
 
-    // MARK: - Cursor usage (opt-in event fetch from cursor.com)
+    // MARK: - Cursor usage (opt-in event fetch + live poll from cursor.com)
 
     private var cursorUsageSection: some View {
         section(label: "Cursor usage") {
@@ -205,6 +205,11 @@ struct SettingsSheet: View {
                     get: { store.settings.cursorUsage },
                     set: { setCursorUsage($0) }),
                 disabled: cursorUsageBusy)
+            Text("Loads history and polls live usage with your Cursor session. Polling pauses when Cursor IDE and Cursor CLI are both quit.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
             if let error = quotaStore.cursorUsageError {
                 Text(error)
                     .font(.system(size: 11))
