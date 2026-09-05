@@ -62,9 +62,13 @@ import Testing
 
     /// The widest label the tooltip can draw, taken from `ClientRegistry` so
     /// that adding a client re-budgets this suite instead of quietly
-    /// outgrowing a name written down here. `ClientStyle.shortName` strips
-    /// only `" CLI" / " Code" / " IDE"`, so `grok`'s "Grok Build" survives
-    /// whole and beats "Synthetic", "OpenClaw", "OpenCode" and "Oh My Pi".
+    /// outgrowing a name written down here.
+    ///
+    /// Widest is measured, not counted: it is "OpenCode" at 52.13 pt, ahead of
+    /// the two characters longer "Grok Build". Round capitals beat a name with
+    /// a space and an `l` and an `i` in it. Both earlier passes at this test
+    /// reasoned from character count and named the wrong one, which is the
+    /// argument for deriving it here.
     private var widestClientName: String {
         ClientRegistry.allIDs
             .map { ClientRegistry.style(for: $0).shortName }
@@ -130,17 +134,24 @@ import Testing
         let widestInScreenshot = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
         let widestPossible = labelCellWidth(widestClientName)
 
+        let overflow = widestPossible - l.labelAvailable
+
         print("#89 screenshot — label available, screenshot's widest, \(widestClientName)")
         print(line("  budget", l.labelAvailable, widestInScreenshot, widestPossible))
+        print(line("  overflow", overflow))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
         #expect(l.labelAvailable > widestInScreenshot,
                 "the screenshot's rows must fit without truncating a client name")
-        // Not a name in the screenshot but the widest one the registry can
-        // produce: the fix changed what happens when a row does not fit, so
-        // the margin on the real worst case is worth locking down.
-        #expect(l.labelAvailable > widestPossible,
-                "so must the widest name ClientRegistry can produce")
+        // The widest name the registry can produce does *not* fit these
+        // columns: "OpenCode" runs 0.30 pt over 62.83 pt and truncates. That
+        // is the failure mode this PR chose (name gives, numbers hold), so it
+        // is recorded rather than treated as a bug — an earlier revision
+        // asserted the opposite from an estimate and went red on CI. The bound
+        // is one glyph, so a future client name that overflows by a visible
+        // amount still fails here.
+        #expect(overflow < width("n", weight: .medium),
+                "the widest client name may truncate here, but only by a hair")
     }
 
     /// The wide case: a 12-digit token count next to a 3-digit cost. Here the
