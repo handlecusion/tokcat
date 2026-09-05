@@ -7,21 +7,19 @@ import Testing
 /// `"<tokens> · <cost>"` string, so the only fixed thing in the row was its
 /// right edge — both numbers slid left by however wide that row's cost was.
 ///
-/// The fix is a three-column `Grid` (dot+name | tokens | cost). `Grid` gives a
-/// column the width of its widest cell and places every cell in it with the
-/// column's alignment, so `Layout` below — column width = max over rows,
-/// trailing-aligned, packed against the content box's right edge — is the
-/// arrangement the view asks for. The alignment then comes for free; what
-/// this suite measures with real font metrics is the part that does not:
-/// whether three columns and two gaps still fit the 174 pt content box at
-/// today's 190 pt tooltip width, for the screenshot's rows and for a
-/// deliberately wide one. The running app is the check that `Grid` renders
-/// this arrangement (verification 2 in the PR).
+/// The fix is a three-column `Grid` (dot+name | tokens | cost). This suite
+/// models the two arrangements over the same rows and measures both with real
+/// AppKit metrics, the way the issue's table was produced: `singleStringXs`
+/// is what the view drew before, `columnXs` is what it asks `Grid` for now.
+/// Asserting the old spread is wide and the new one is zero is the only
+/// formulation that ties an assertion to the change; the rest of the suite
+/// budgets the widths, which is the part that can regress as fonts, names or
+/// magnitudes grow. What no measurement here can settle is whether `Grid`
+/// hands the horizontal slack to the label cell — that is verification 2, in
+/// the running app.
 ///
-/// Widths come from `NSAttributedString.size(withAttributes:)`, the way the
-/// measurements in the issue were produced. Two places sum substring widths,
-/// which ignores kerning across the join — good to a fraction of a point,
-/// which is the resolution this budget needs.
+/// Two places sum substring widths, which ignores kerning across the join —
+/// good to a fraction of a point, the resolution this budget needs.
 @Suite struct TooltipColumnLayoutTests {
     private struct Row {
         let name: String
@@ -37,11 +35,16 @@ import Testing
         Row(name: "Oh My Pi", tokens: "32,521,315", cost: "$21.24"),
     ]
 
+    /// The widest label the tooltip can draw. `ClientStyle.shortName` strips
+    /// only `" CLI" / " Code" / " IDE"`, so `grok`'s "Grok Build" survives
+    /// whole and beats "Synthetic", "OpenClaw", "OpenCode", "KiloCode" and
+    /// "Oh My Pi".
+    private static let widestClientName = "Grok Build"
+
     /// A 12-digit token count against a 3-digit cost, per the issue's ask to
-    /// verify a wide case rather than only the screenshot's numbers. The name
-    /// is the longest one in `ClientRegistry`.
+    /// verify a wide case rather than only the screenshot's numbers.
     private static let wide = [
-        Row(name: "Synthetic", tokens: "999,999,999,999", cost: "$152.46"),
+        Row(name: widestClientName, tokens: "999,999,999,999", cost: "$152.46"),
         Row(name: "Codex", tokens: "4,092,946", cost: "$1.18"),
     ]
 
@@ -57,13 +60,29 @@ import Testing
         TooltipMetrics.dotSize + TooltipMetrics.dotLabelSpacing + width(name, weight: .medium)
     }
 
-    /// The Grid arrangement, resolved for a set of rows. All x are measured
-    /// from the left edge of the tooltip's content box.
+    private func spread(_ xs: [CGFloat]) -> CGFloat { (xs.max() ?? 0) - (xs.min() ?? 0) }
+
+    /// Where each row's numbers landed under the old arrangement: one
+    /// right-aligned string, so both numbers are pushed left by that row's
+    /// own cost width and by nothing else.
+    private func singleStringXs(_ rows: [Row]) -> (tokensRight: [CGFloat], costLeft: [CGFloat]) {
+        (rows.map { TooltipMetrics.contentWidth - width(" · " + $0.cost) },
+         rows.map { TooltipMetrics.contentWidth - width($0.cost) })
+    }
+
+    /// Where each row's numbers land under the `Grid` arrangement: a column
+    /// as wide as its widest cell, every cell in it trailing-aligned, both
+    /// columns packed against the content box's right edge.
+    private func columnXs(_ rows: [Row]) -> (tokensRight: [CGFloat], costLeft: [CGFloat]) {
+        let l = layout(rows)
+        return (rows.map { _ in l.tokensColumnRight }, rows.map { _ in l.costColumnLeft })
+    }
+
+    /// The resolved column geometry, as x from the content box's left edge.
     private struct Layout {
         let tokensColumnLeft: CGFloat
         let tokensColumnRight: CGFloat
         let costColumnLeft: CGFloat
-        let costColumnRight: CGFloat
         /// What is left for the dot + client name cell.
         let labelAvailable: CGFloat
     }
@@ -71,92 +90,83 @@ import Testing
     private func layout(_ rows: [Row]) -> Layout {
         let tokensColumn = rows.map { width($0.tokens) }.max() ?? 0
         let costColumn = rows.map { width($0.cost) }.max() ?? 0
-        let costRight = TooltipMetrics.contentWidth
-        let tokensRight = costRight - costColumn - TooltipMetrics.columnSpacing
+        let tokensRight = TooltipMetrics.contentWidth - costColumn - TooltipMetrics.columnSpacing
         let tokensLeft = tokensRight - tokensColumn
         return Layout(tokensColumnLeft: tokensLeft,
                       tokensColumnRight: tokensRight,
-                      costColumnLeft: costRight - costColumn,
-                      costColumnRight: costRight,
+                      costColumnLeft: TooltipMetrics.contentWidth - costColumn,
                       labelAvailable: tokensLeft - TooltipMetrics.columnSpacing)
     }
 
     private func line(_ label: String, _ values: CGFloat...) -> String {
-        label.padding(toLength: max(14, label.count), withPad: " ", startingAt: 0)
+        label.padding(toLength: max(16, label.count), withPad: " ", startingAt: 0)
             + values.map { String(format: "%8.2f", Double($0)) }.joined()
     }
 
-    // MARK: - The bug
+    // MARK: - The fix, against the bug
 
-    /// Documents the cause: with one string per row, the x of both numbers is
-    /// a function of that row's cost width alone.
-    @Test func singleStringRowsPutEveryNumberAtADifferentX() {
-        var tokensRight: [CGFloat] = []
-        var costLeft: [CGFloat] = []
+    /// The assertion this PR exists for: over the same rows, the old
+    /// arrangement puts every number at its own x and the new one puts them
+    /// all at a single x per column.
+    @Test func theColumnsCollapseTheWanderToZero() {
+        for (label, rows) in [("screenshot", Self.screenshot), ("wide", Self.wide)] {
+            let old = singleStringXs(rows)
+            let new = columnXs(rows)
 
-        print("#89 old layout — one right-aligned string per row")
-        print("                tokens R  cost L")
-        for row in Self.screenshot {
-            let right = TooltipMetrics.contentWidth - width(" · " + row.cost)
-            let left = TooltipMetrics.contentWidth - width(row.cost)
-            tokensRight.append(right)
-            costLeft.append(left)
-            print(line(row.name, right, left))
-        }
-
-        let tokensSpread = (tokensRight.max() ?? 0) - (tokensRight.min() ?? 0)
-        let costSpread = (costLeft.max() ?? 0) - (costLeft.min() ?? 0)
-        print(line("spread", tokensSpread, costSpread))
-
-        // Measured at 14.33 pt in the issue. Asserted loosely so a future
-        // font-metric change cannot fail this bit of documentation.
-        #expect(tokensSpread > 5, "the wander this issue is about")
-        #expect(costSpread > 5)
-    }
-
-    // MARK: - The fix
-
-    @Test func columnLayoutGivesEveryRowTheSameX() {
-        for rows in [Self.screenshot, Self.wide] {
-            let l = layout(rows)
-            for row in rows {
-                // Trailing alignment inside a column as wide as its widest
-                // cell: every row's number ends at the column's x, and no
-                // cell has to be squeezed to get there.
-                #expect(width(row.tokens) <= l.tokensColumnRight - l.tokensColumnLeft)
-                #expect(width(row.cost) <= l.costColumnRight - l.costColumnLeft)
+            print("#89 \(label) — per-row x (tokens right, cost left):")
+            for (i, row) in rows.enumerated() {
+                print(line("  " + row.name, old.tokensRight[i], old.costLeft[i],
+                           new.tokensRight[i], new.costLeft[i]))
             }
-        }
+            print(line("  spread old/new",
+                       spread(old.tokensRight), spread(old.costLeft),
+                       spread(new.tokensRight), spread(new.costLeft)))
 
-        let l = layout(Self.screenshot)
-        print("#89 new layout — one x per column, every row:")
-        print(line("tokens L/R", l.tokensColumnLeft, l.tokensColumnRight))
-        print(line("cost L/R", l.costColumnLeft, l.costColumnRight))
-        print(line("spread", 0, 0))
+            // Measured at 14.33 pt in the issue. Loose lower bound so a font
+            // metric change cannot fail the documentation half of this.
+            #expect(spread(old.tokensRight) > 5, "the wander this issue is about")
+            #expect(spread(old.costLeft) > 5)
+            #expect(spread(new.tokensRight) == 0)
+            #expect(spread(new.costLeft) == 0)
+
+            // And the columns have to actually fit to reach those x — this is
+            // the half that can regress.
+            let l = layout(rows)
+            #expect(l.tokensColumnLeft > 0)
+            #expect(l.labelAvailable > 0)
+        }
     }
+
+    // MARK: - Width budget
 
     @Test func columnsFitTheTooltipAtTodaysWidth() {
         let l = layout(Self.screenshot)
-        let widest = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
+        let widestInScreenshot = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
+        let widestPossible = labelCellWidth(Self.widestClientName)
 
-        print(line("#89 screenshot", widest, l.labelAvailable))
+        print(line("#89 screenshot", l.labelAvailable, widestInScreenshot, widestPossible))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
-        #expect(l.labelAvailable > widest,
+        #expect(l.labelAvailable > widestInScreenshot,
                 "the screenshot's rows must fit without truncating a client name")
+        #expect(l.labelAvailable > widestPossible,
+                "so must the widest name ClientRegistry can produce")
     }
 
-    /// The wide case: a 12-digit token count next to a 3-digit cost still
-    /// leaves the label cell its dot and a readable name. Rows wider than
-    /// that truncate the name — the numbers never move.
+    /// The wide case: a 12-digit token count next to a 3-digit cost. Here the
+    /// numbers deliberately win — `"Grok Build"` does not fit beside them and
+    /// truncates, which is this PR's chosen failure mode. What must still
+    /// hold is that both number columns fit and the label keeps its dot and a
+    /// short name.
     @Test func wideCaseStillFitsBothNumberColumns() {
         let l = layout(Self.wide)
-        let shortestPlausibleLabel = labelCellWidth("Amp")
 
-        print(line("#89 wide", shortestPlausibleLabel, l.labelAvailable))
+        print(line("#89 wide", l.labelAvailable,
+                   labelCellWidth("Amp"), labelCellWidth(Self.widestClientName)))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
-        #expect(l.labelAvailable > shortestPlausibleLabel)
+        #expect(l.labelAvailable > labelCellWidth("Amp"),
+                "the shortest client name must survive even the widest numbers")
     }
 
     @Test func metricsMatchTheTooltipBox() {
