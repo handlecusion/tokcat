@@ -13,6 +13,14 @@ name: Claude harness · merge gate
 # removed, the owner requests changes or dismisses their review, or new commits
 # are pushed — the owner re-approves what they actually reviewed.
 #
+# The merge itself runs under HARNESS_MERGE_TOKEN, a fine-grained PAT scoped to
+# this repo (contents + issues + pull-requests, read/write). It is not cosmetic:
+# GitHub dispatches no workflow events for anything GITHUB_TOKEN does, so a
+# github-actions[bot] merge never fires `pull_request_target: closed` and the
+# wrap-up below never runs — that is how #86 stayed labelled after merging. The
+# PAT deliberately has no Workflows permission, so a PR touching
+# .github/workflows/** falls back to GITHUB_TOKEN and wraps up in-step instead.
+#
 # A Claude cloud session acts under the owner's identity but *through the Claude
 # GitHub App*; a label applied that way is refused, so a session can never
 # approve its own work.
@@ -65,6 +73,10 @@ jobs:
       REVIEW_STATE: ${{ github.event.review.state || '' }}
       HARNESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Decide
         id: decide
         run: |
@@ -110,6 +122,8 @@ jobs:
 
       - name: Enable auto-merge (merges when CI is green)
         if: steps.decide.outputs.mode == 'approve'
+        env:
+          MERGE_TOKEN: ${{ secrets.HARNESS_MERGE_TOKEN }}
         run: |
           state=$(gh pr view "$PR" --json state,isDraft,mergeStateStatus --jq '"\(.state) draft=\(.isDraft) merge=\(.mergeStateStatus)"')
           echo "PR #$PR: $state"
@@ -117,17 +131,50 @@ jobs:
             OPEN\ draft=false*) ;;
             *) echo "::error::PR is not an open, non-draft PR ($state)"; exit 1 ;;
           esac
-          if ! gh pr merge "$PR" --auto --merge; then
-            # Auto-merge is refused when nothing is pending (checks already green): merge directly.
-            gh pr merge "$PR" --merge
+
+          # Merge as a real user (the PAT) so the resulting `closed` event fires
+          # the wrap-up run; GITHUB_TOKEN merges dispatch nothing. The PAT holds
+          # no Workflows permission, so it is refused on PRs that touch
+          # .github/workflows/** — fall back rather than leave an approved PR
+          # stuck, and wrap up in-step since no event will come.
+          merge() {
+            # $1 token, rest: gh pr merge args
+            local token=$1; shift
+            GH_TOKEN="$token" gh pr merge "$PR" "$@"
+          }
+          via=pat
+          if [ -z "${MERGE_TOKEN:-}" ]; then
+            echo "::warning::HARNESS_MERGE_TOKEN is not set — merging as github-actions[bot]; the closed event will not fire"
+            via=actions; MERGE_TOKEN="$GH_TOKEN"
           fi
+          # --auto is refused when nothing is pending (checks already green): merge directly.
+          if ! merge "$MERGE_TOKEN" --auto --merge && ! merge "$MERGE_TOKEN" --merge; then
+            if [ "$via" = pat ]; then
+              echo "::warning::the PAT could not merge (a PR touching .github/workflows/** needs a Workflows permission it does not have) — retrying as github-actions[bot]"
+              via=actions
+              merge "$GH_TOKEN" --auto --merge || merge "$GH_TOKEN" --merge
+            else
+              exit 1
+            fi
+          fi
+
           if [ "$(gh pr view "$PR" --json state --jq .state)" = "MERGED" ]; then
             how="CI가 이미 통과해 즉시 머지했습니다."
+            merged=yes
           else
             how="자동 머지 예약 — 필수 CI 체크가 모두 통과하면 GitHub이 main에 머지합니다. 그 전에 새 커밋이 푸시되면 승인은 해제됩니다."
+            merged=no
+            [ "$via" = pat ] || how="$how (github-actions[bot]로 예약되어 머지 후 이슈 정리는 자동으로 돌지 않습니다.)"
           fi
           gh api -X POST "repos/$GH_REPO/issues/$PR/comments" \
             -f body="$(printf '✅ **Claude harness** — 오너 승인 확인 (%s). %s\n- 런: %s\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$EVENT" "$how" "$HARNESS_RUN_URL" "$PR")" --silent
+
+          # Merged right here: no `closed` event is coming for this run's own
+          # merge when it went through GITHUB_TOKEN, and an idempotent extra
+          # wrap-up costs nothing when it does.
+          if [ "$merged" = yes ]; then
+            scripts/claude-harness/finish.sh "$PR"
+          fi
 
       - name: Withdraw approval
         if: steps.decide.outputs.mode == 'withdraw'
@@ -147,25 +194,7 @@ jobs:
 
       - name: Merged → close the linked issue and clear harness labels
         if: steps.decide.outputs.mode == 'finish'
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          issue=$(printf '%s' "$PR_BODY" | grep -oE 'claude-harness[^>]*issue=[0-9]+' | grep -oE '[0-9]+$' | head -1)
-          [ -n "$issue" ] || issue=$(printf '%s' "$HEAD_REF" | grep -oE 'issue-[0-9]+$' | grep -oE '[0-9]+')
-          [ -n "$issue" ] || { echo "no linked issue found in PR body/branch — nothing to close"; exit 0; }
-          state=$(gh api "repos/$GH_REPO/issues/$issue" --jq .state)
-          for l in 'claude%3Apr-open' 'claude%3Arunning' 'claude%3Aneeds-info'; do
-            gh api -X DELETE "repos/$GH_REPO/issues/$issue/labels/$l" --silent 2>/dev/null || true
-          done
-          if [ "$state" = "open" ]; then
-            gh api -X POST "repos/$GH_REPO/issues/$issue/comments" \
-              -f body="$(printf '✅ **Claude harness** — PR #%s가 main에 머지되어 이 이슈를 닫습니다.\n\n<!-- claude-harness kind=MERGE_GATE issue=%s -->' "$PR" "$issue")" --silent
-            gh api -X PATCH "repos/$GH_REPO/issues/$issue" -f state=closed -f state_reason=completed --silent
-            echo "closed #$issue"
-          else
-            echo "#$issue already $state"
-          fi
+        run: scripts/claude-harness/finish.sh "$PR"
 
       - name: Report failure on the PR
         if: failure()

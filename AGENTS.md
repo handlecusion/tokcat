@@ -120,11 +120,19 @@ Owner-only automation, documented in `.claude/harness/README.md`:
   self-review note. Reply with `@claude` to continue (`claude-followup.yml`).
 - Merge gate (`claude-merge-gate.yml`): owner approval (review **Approve**, or the
   `approved` label for Claude's own PRs) enables auto-merge; the `protect-main`
-  ruleset requires the three CI jobs, so nothing lands before CI is green.
+  ruleset requires the three CI jobs, so nothing lands before CI is green. The
+  merge runs under `HARNESS_MERGE_TOKEN` — a merge performed with `GITHUB_TOKEN`
+  dispatches no events, so the `pull_request_target: closed` wrap-up
+  (`scripts/claude-harness/finish.sh`: close the issue, drop the harness labels)
+  would never run. That PAT has no Workflows permission on purpose, so a PR
+  touching `.github/workflows/**` falls back to `GITHUB_TOKEN` and wraps up
+  in-step.
 - Every opened PR also gets an automatic COMMENT review from a second routine
   (`.claude/harness/REVIEW_PROMPT.md`) via a GitHub trigger — it never approves.
 - Secrets: `CLAUDE_ROUTINE_FIRE_URL`, `CLAUDE_ROUTINE_FIRE_TOKEN` (per-routine
-  token; it can only fire that routine). No Claude credentials on runners.
+  token; it can only fire that routine), `HARNESS_MERGE_TOKEN` (fine-grained PAT,
+  contents/issues/pull-requests on this repo only, expires 2027-09-06). No Claude
+  credentials on runners.
 - Sessions write to GitHub as the owner *via the Claude GitHub App*
   (`performed_via_github_app`); the workflows use that to tell a human apart
   from a session, so never post `@claude` or the `approved` label from a session.

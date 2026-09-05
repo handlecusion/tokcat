@@ -35,9 +35,10 @@
 | --- | --- |
 | `.github/workflows/claude-dispatch.yml` | `issues.labeled(claude)` → 세션 발화 + 링크 코멘트. `workflow_dispatch`(DISPATCH/DRY_RUN)로 수동 실행 가능 |
 | `.github/workflows/claude-followup.yml` | 오너의 `@claude` 코멘트/리뷰 → 후속 세션. 시간당 3회 상한 |
-| `.github/workflows/claude-merge-gate.yml` | 오너 승인(리뷰 Approve / `approved` 라벨) → auto-merge. 라벨 제거·변경 요청·새 푸시 시 해제. 머지되면 연결 이슈를 닫고 라벨 정리 |
+| `.github/workflows/claude-merge-gate.yml` | 오너 승인(리뷰 Approve / `approved` 라벨) → auto-merge. 라벨 제거·변경 요청·새 푸시 시 해제. 머지는 `HARNESS_MERGE_TOKEN`(전용 PAT)으로 수행하고, 머지되면 연결 이슈를 닫고 라벨 정리 |
 | `scripts/claude-harness/build-payload.py` | 이슈/PR + 토론 + 문서·스펙을 한 텍스트로 조립 |
 | `scripts/claude-harness/fire.sh` | `/fire` 호출, 429/5xx 재시도, 세션 ID/URL 출력 |
+| `scripts/claude-harness/finish.sh` | 머지된 PR의 연결 이슈를 닫고 하네스 라벨(`claude`, `claude:*`) 제거. 멱등 |
 | `.claude/harness/ROUTINE_PROMPT.md` | 이슈 위임 세션이 따르는 지침의 원본. 클론에 있으면 claude.ai에 저장된 사본보다 우선 |
 | `.claude/harness/REVIEW_PROMPT.md` | PR 자동 리뷰 세션의 지침 원본 (같은 우선순위 규칙) |
 
@@ -56,13 +57,26 @@
    gh secret set CLAUDE_ROUTINE_FIRE_TOKEN -R handlecusion/tokcat   # sk-ant-oat01-…
    ```
    토큰 재발급은 같은 화면의 *Regenerate* — 이전 토큰은 즉시 무효.
-3. **저장소 설정**(이미 적용됨): *Allow auto-merge* 켜기, 룰셋 `protect-main`에 필수 상태 체크
+3. **머지 전용 PAT** (`HARNESS_MERGE_TOKEN`): fine-grained PAT, 리소스 오너 `handlecusion`,
+   저장소는 `handlecusion/tokcat` **하나만**, 권한은 Contents / Issues / Pull requests = Read and write
+   (Workflows는 **주지 않는다** — 아래 이유). 만료 2027-09-06, 이름 `tokcat-harness-merge`.
+   ```sh
+   gh secret set HARNESS_MERGE_TOKEN -R handlecusion/tokcat   # github_pat_…
+   ```
+   **왜 필요한가**: GitHub은 `GITHUB_TOKEN`이 한 일에 대해 워크플로우 이벤트를 발화하지 않는다.
+   github-actions[bot]이 머지하면 `pull_request_target: closed`가 오지 않아 "이슈 닫기 + 라벨 정리"
+   스텝이 영원히 skip된다(#86에서 실측 — 이슈는 `Closes #N`으로 닫혔지만 라벨이 남았다).
+   PAT로 머지하면 이벤트가 정상 발화한다. Workflows 권한을 뺐기 때문에 `.github/workflows/**`를
+   건드리는 PR은 PAT 머지가 거부되고, 게이트가 `GITHUB_TOKEN`으로 폴백한 뒤 정리를 같은 런에서
+   직접 실행한다(`finish.sh`). 시크릿이 없으면 폴백 경로로만 동작한다 — 승인이 막히지는 않는다.
+   **부수 효과**: PAT 머지는 실제 사용자 푸시이므로 머지 후 `push: main` CI가 한 번 더 돈다.
+4. **저장소 설정**(이미 적용됨): *Allow auto-merge* 켜기, 룰셋 `protect-main`에 필수 상태 체크
    `Frontend typecheck` / `Rust check` / `Swift build + test` 추가. CI 잡 이름을 바꾸면 룰셋도 같이 바꿀 것.
-4. 세션이 GitHub에 쓰려면 claude.ai 계정에 GitHub이 연결돼 있어야 한다 (Claude GitHub App — 2026-08-30 연결 완료,
+5. 세션이 GitHub에 쓰려면 claude.ai 계정에 GitHub이 연결돼 있어야 한다 (Claude GitHub App — 2026-08-30 연결 완료,
    앱은 `handlecusion` 계정 전체 저장소에 설치됨). 클라우드 VM에는 `gh`가 **없고** 내장 GitHub MCP 도구
    (`add_issue_comment`, `issue_write`, `create_pull_request`, `pull_request_review_write`, …)로 쓴다.
 
-5. **루틴 (PR 자동 리뷰)**: https://claude.ai/code/routines/trig_01BswRvckXcbV6xSM9CkLQxQ — "tokcat · PR auto-review".
+6. **루틴 (PR 자동 리뷰)**: https://claude.ai/code/routines/trig_01BswRvckXcbV6xSM9CkLQxQ — "tokcat · PR auto-review".
    GitHub 트리거 `pull_request.opened` (Claude GitHub App 웹훅, Actions 불필요).
    **실측 제약(2026-08-31)**: 구독을 걸어도 `ready_for_review`·`reopened`는 세션을 만들지 않았고
    `opened`만 전달됐다(#75–#79에서 5/5). 즉 **웹훅 생성 이전에 열린 PR과 draft→ready 전환 PR은
@@ -82,7 +96,8 @@
   로컬에서 `GH_REPO=handlecusion/tokcat scripts/claude-harness/build-payload.py --kind DRY_RUN --issue N > p.txt && scripts/claude-harness/fire.sh p.txt`).
   세션이 이슈에 "harness dry run OK" 코멘트를 남기면 경로 전체가 살아 있는 것.
   (2026-08-30 E2E 검증: #70 DRY_RUN, #71→PR #72 — 라벨 → 세션 → PR+인라인 셀프 리뷰 → `@claude` 리뷰 반영 →
-  `approved` → auto-merge. 머지는 github-actions[bot]이 수행하므로 `issues: write` 없이는 `Closes #N`이 안 닫힌다.)
+  `approved` → auto-merge. 2026-09-06 재검증: #86→PR #87. 이때 머지가 github-actions[bot] 명의라
+  `closed` 이벤트가 발화하지 않아 라벨 정리 스텝이 skip되는 걸 발견 → 머지를 `HARNESS_MERGE_TOKEN`으로 옮겼다.)
 - **재실행**: `claude:running`을 뗀 뒤, `claude` 라벨을 떼었다가 다시 붙인다(라벨 *추가* 이벤트가 트리거).
 - **질문 답변**: `claude:needs-info`가 붙어 있는 동안은 오너의 아무 코멘트나 후속 세션을 띄운다. 그 외에는
   코멘트/리뷰(인라인 코멘트 포함) 어딘가에 `@claude`가 있어야 한다. Claude 글을 Quote-reply 해도 된다.
@@ -95,9 +110,10 @@
   세션이 안 뜨는데 코멘트도 없다면 워크플로우 런 로그(`🛰️ … 세션을 띄우지 못했습니다` 코멘트에 링크).
 - **한도**: 루틴 런은 계정별 일일 상한이 있고 구독 사용량을 쓴다. `fire.sh`는 429/503/무응답만 재시도한다(`/fire`는
   멱등이 아니라 5xx 재시도는 세션을 두 개 만들 수 있음). 실패 코멘트에 세션 링크가 있으면 라벨을 다시 붙이지 말 것.
-- **지켜볼 것**: (1) auto-merge로 머지된 커밋은 GITHUB_TOKEN 이벤트라 `push: main` CI가 돌지 않는다(PR CI가 이미 통과).
-  (2) 룰셋의 `require_extra_approval_for_unattributed_changes`가 Claude 커밋(작성자 귀속 문제)에 걸려 auto-merge가
-  멈추면 그 옵션을 끄거나 커밋 작성자를 오너로 맞춘다. 첫 실제 PR에서 확인할 것.
+- **지켜볼 것**: (1) PAT 머지는 실제 사용자 푸시라 머지 후 `push: main` CI가 한 번 더 돈다(PR CI와 중복).
+  폴백(GITHUB_TOKEN) 머지에서는 여전히 안 돈다. (2) 룰셋의 `require_extra_approval_for_unattributed_changes`가
+  Claude 커밋(작성자 귀속 문제)에 걸려 auto-merge가 멈추면 그 옵션을 끄거나 커밋 작성자를 오너로 맞춘다.
+  (3) PAT 만료는 2027-09-06 — 만료되면 게이트는 폴백 경로로 조용히 내려간다(런 로그에 `::warning::`).
 
 ## 보안 경계
 
