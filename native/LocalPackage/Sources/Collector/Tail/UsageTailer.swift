@@ -15,12 +15,14 @@ import Foundation
 //               nested one level deeper, inside the parent session's dir)
 // Cursor:       no local ledger — Model's CursorLiveProvider diffs
 //               GetAggregatedUsageEvents and calls `ingest`.
+// Aside:        ~/.aside/u/<account>/sessions/**/messages.jsonl
 
 let tailClientClaude = "claude-code"
 let tailClientCodex = "codex-cli"
 let tailClientHermes = "hermes"
 let tailClientGrok = "grok"
 let tailClientOmp = "omp"
+let tailClientAside = "aside"
 let eventWindowSecs: Int64 = 3600  // EVENT_WINDOW_SECS (:26)
 let coldScanLookbackSecs: Int64 = 6 * 3600  // COLD_SCAN_LOOKBACK_SECS (:27)
 /// A file touched this recently is re-stat'd on every tick even when its
@@ -34,6 +36,7 @@ enum TailClientKind: Equatable, Sendable {
     case codex
     case grok
     case omp
+    case aside
 }
 
 /// One usage delta in the live event ring (usage_tail.rs:36-52).
@@ -258,6 +261,11 @@ public actor UsageTailer {
                     if client == .grok, entry.name != "updates.jsonl" {
                         continue
                     }
+                    // Aside session dirs hold one transcript plus an
+                    // artifacts/ dir; only messages.jsonl carries usage.
+                    if client == .aside, entry.name != "messages.jsonl" {
+                        continue
+                    }
                     let path = joinPath(dir, entry.name)
                     if !isFullScan { walked.insert(path) }
                     added += processFile(
@@ -385,6 +393,8 @@ public actor UsageTailer {
                                          emitFirstAsDelta: grokEmitFirst)
             case .omp:
                 recorded = parseOmpLine(path: path, raw: trimmed)
+            case .aside:
+                recorded = parseAsideLine(raw: trimmed)
             }
             if recorded { added += 1 }
             consumed += UInt64(chunk.count)
@@ -564,6 +574,42 @@ public actor UsageTailer {
                        model: model, input: input, output: output,
                        cacheRead: cacheRead, cacheWrite: cacheWrite),
             dedupKey: responseId.isEmpty ? "" : "omp:\(responseId)")
+    }
+
+    // MARK: - Aside lines
+
+    /// Aside session entries. Flat records (no envelope): every assistant
+    /// line carries the usage of exactly one API response — per-call values,
+    /// not a running total — so each line is emitted as-is with no threaded
+    /// state. Aside has no subagents, so every event is the "main" agent.
+    private func parseAsideLine(raw: [UInt8]) -> Bool {
+        guard let value = JSONValue.parse(Data(raw)) else { return false }
+        guard value["role"]?.asString == "assistant" else { return false }
+        guard let usage = value["usage"] else { return false }
+
+        let input = strictI64(usage["input"]) ?? 0
+        let output = strictI64(usage["output"]) ?? 0
+        let cacheRead = strictI64(usage["cacheRead"]) ?? 0
+        let cacheWrite = strictI64(usage["cacheWrite"]) ?? 0
+        if input + output + cacheRead + cacheWrite <= 0 { return false }
+
+        let model = tailNormalizeModel(value["model"]?.asString ?? "unknown")
+        // Spelled out rather than chained through `map`/`??` for the same
+        // reason as parseOmpLine: the autoclosure would capture `value`
+        // alongside the actor-isolated `now()`.
+        let tsMs: Int64
+        if let epochMs = strictI64(value["timestamp"]) {
+            tsMs = normalizeEpochMs(epochMs)
+        } else {
+            tsMs = now()
+        }
+        let responseId = value["responseId"]?.asString ?? ""
+
+        return pushEvent(
+            UsageEvent(tsMs: tsMs, client: tailClientAside, agent: "main",
+                       model: model, input: input, output: output,
+                       cacheRead: cacheRead, cacheWrite: cacheWrite),
+            dedupKey: responseId.isEmpty ? "" : "aside:\(responseId)")
     }
 
     // MARK: - Hermes (usage_tail.rs:543-634)
@@ -773,6 +819,9 @@ public actor UsageTailer {
             if isDirectory(grok) { out.append((grok, .grok)) }
             let omp = joinPath(joinPath(joinPath(sim, ".omp"), "agent"), "sessions")
             if isDirectory(omp) { out.append((omp, .omp)) }
+            for root in asideSessionRoots(in: [joinPath(sim, ".aside")]) {
+                out.append((root, .aside))
+            }
             return out
         }
 
@@ -804,6 +853,10 @@ public actor UsageTailer {
         for root in ompSessionRoots() {
             guard seenOmpRoots.insert(root).inserted else { continue }
             if isDirectory(root) { out.append((root, .omp)) }
+        }
+        // Aside: one sessions root per signed-in account.
+        for root in asideSessionRoots() {
+            out.append((root, .aside))
         }
         return out
     }
