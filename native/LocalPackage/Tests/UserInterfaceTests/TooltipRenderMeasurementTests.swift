@@ -16,7 +16,8 @@ import Testing
 /// bitmap, and the band's rightmost inked pixel is that row's right edge.
 ///
 /// Measured on macOS 15 for the screenshot's four rows, x relative to the
-/// 174 pt content box:
+/// 174 pt content box, at `columnSpacing` 6 — the value shipped before the
+/// label cell dropped its trailing `Spacer`:
 ///
 ///     cost   173.12 173.12 173.12 173.12   spread 0.000
 ///     tokens 127.12 127.62 127.75 127.88   spread 0.750
@@ -26,7 +27,17 @@ import Testing
 /// than one ending in `6`. The advances are aligned; the ink is ragged by
 /// under a point. The single-string layout this replaced wandered 14.33 pt
 /// (`TooltipColumnLayoutTests.singleStringRowsPutEveryNumberAtADifferentX`),
-/// so the budgets below are ~19x tighter than the bug.
+/// so the budgets below are ~19x tighter than the bug. At `columnSpacing` 5
+/// the cost column does not move — it is flush against the content box — and
+/// the tokens column moves 1 pt right, with both spreads unchanged, which is
+/// what says the point came out of the gutter and not out of the alignment.
+/// The tests print the current table on every run.
+///
+/// The suite also settles what happens to the client name, in both directions:
+/// at the screenshot's numbers even the widest name the registry can draw
+/// renders whole, and against a 12-digit token count it truncates. Both are
+/// measured by rendering the same cell twice — once in the tooltip's box, once
+/// unconstrained — and comparing the ink.
 ///
 /// The suite is tied to the shipping view, not to a copy of it:
 /// `TooltipSegmentRows` lives in `UsageBarChart.swift`, so reverting that file
@@ -48,6 +59,27 @@ import Testing
         TooltipSegmentRows.Row(id: "omp", name: "Oh My Pi",
                                tokens: "32,521,315", cost: "$21.24", color: .black),
     ]
+
+    /// The screenshot's columns, with its widest row renamed to the widest
+    /// name `ClientRegistry` can draw. Same token and cost strings, so the two
+    /// number columns are exactly as wide as in `screenshot` — this asks what
+    /// the tooltip's ordinary case does to its longest label, nothing else.
+    private static var widestName: [TooltipSegmentRows.Row] {
+        [TooltipSegmentRows.Row(id: "widest", name: TooltipTestSupport.widestClientName,
+                                tokens: "599,788,471", cost: "$152.46", color: .black)]
+            + screenshot.dropFirst()
+    }
+
+    /// A 12-digit token count against a 3-digit cost, carrying that same name.
+    /// Here the numbers take the room and the name is expected to give.
+    private static var wide: [TooltipSegmentRows.Row] {
+        [
+            TooltipSegmentRows.Row(id: "widest", name: TooltipTestSupport.widestClientName,
+                                   tokens: "999,999,999,999", cost: "$152.46", color: .black),
+            TooltipSegmentRows.Row(id: "codex", name: "Codex",
+                                   tokens: "4,092,946", cost: "$1.18", color: .black),
+        ]
+    }
 
     // MARK: - The measurements
 
@@ -73,11 +105,11 @@ import Testing
     }
 
     /// The other half of the fix: `Grid` hands the slack to the label cell —
-    /// the one that ends in `Spacer(minLength: 0)` — so the number columns sit
-    /// against the content box's right edge, where the total row's cost above
-    /// them already is. If the slack went to the number columns instead, the
-    /// columns would still agree with each other but the block would be
-    /// left-shifted with a gap on the right. Measured at 173.12 of 174.
+    /// the one whose name carries `.frame(maxWidth: .infinity)` — so the number
+    /// columns sit against the content box's right edge, where the total row's
+    /// cost above them already is. If the slack went to the number columns
+    /// instead, the columns would still agree with each other but the block
+    /// would be left-shifted with a gap on the right. Measured at 173.12 of 174.
     @MainActor
     @Test func costColumnSitsAgainstTheContentBoxRightEdge() throws {
         let full = try rightEdges(of: nil)
@@ -88,15 +120,81 @@ import Testing
                 "the rows must be flush right, not left-shifted with a gap")
     }
 
+    // MARK: - What happens to the client name
+
+    /// At the screenshot's numbers the tooltip draws every client name whole,
+    /// the widest one the registry can produce included.
+    ///
+    /// Asserted against the render rather than a width model: the same label
+    /// cell is rendered twice, once in the tooltip's 190 pt box and once
+    /// unconstrained, and the two ink right edges must agree. An ellipsis
+    /// costs the row real pixels, so a truncated name lands well short of its
+    /// unconstrained self — this fails on truncation, it does not merely bound
+    /// it. A model of the cell's width is what got this wrong twice: it left
+    /// out the `HStack` gap a trailing `Spacer` charged for, and said 0.30 pt
+    /// short where the render truncated outright.
+    @MainActor
+    @Test func widestClientNameRendersUntruncated() throws {
+        let name = TooltipTestSupport.widestClientName
+        let drawn = try rightEdges(of: .label, rows: Self.widestName)
+        let ideal = try rightEdges(of: .label, rows: Self.widestName, constrained: false)
+
+        print("#89 label cell — widest registry name is \(name)")
+        print(row("in box", drawn))
+        print(row("ideal", ideal))
+
+        try #require(drawn.count == ideal.count,
+                     "one ink band per row in both renders")
+        for (i, (drawn, ideal)) in zip(drawn, ideal).enumerated() {
+            #expect(abs(drawn - ideal) <= 0.3,
+                    "row \(i) is truncated: ink ends at \(fmt(drawn)) pt, whole it needs \(fmt(ideal)) pt")
+        }
+    }
+
+    /// The other case, so both are on the record: with a 12-digit token count
+    /// there is no room for that name and this PR's chosen failure mode kicks
+    /// in — the numbers hold their columns and the name takes the ellipsis.
+    /// Asserted, not merely permitted, so a future change that starts
+    /// truncating the ordinary case cannot pass by calling it expected.
+    @MainActor
+    @Test func wideNumbersTruncateTheWidestClientName() throws {
+        let drawn = try rightEdges(of: .label, rows: Self.wide)
+        let ideal = try rightEdges(of: .label, rows: Self.wide, constrained: false)
+
+        print("#89 label cell, 12-digit tokens — \(TooltipTestSupport.widestClientName)")
+        print(row("in box", drawn))
+        print(row("ideal", ideal))
+
+        let drawnWidest = try #require(drawn.first)
+        let idealWidest = try #require(ideal.first)
+        #expect(idealWidest - drawnWidest > 0.3,
+                "the widest name has to give way to 12 digits, by design")
+        // The short name in the second row still survives; if it stopped
+        // fitting, the tooltip would be drawing rows with no identity at all.
+        if drawn.count > 1, ideal.count > 1 {
+            #expect(abs(drawn[1] - ideal[1]) <= 0.3,
+                    "a short client name must survive even the widest numbers")
+        }
+    }
+
     // MARK: - Rendering and pixel measurement
 
     /// Right edge of every ink band, in points from the content box's left
     /// edge, for a render showing only `column` (all three when `nil`).
+    ///
+    /// `constrained: false` renders the same rows at their ideal size instead
+    /// of in the tooltip's 190 pt box, which is how a cell's drawn ink is
+    /// compared against the ink it wants. Both renders keep the same padding,
+    /// so both x's are relative to the same content-box left edge.
     @MainActor
-    private func rightEdges(of column: TooltipSegmentRows.Column?) throws -> [CGFloat] {
-        let content = TooltipSegmentRows(rows: Self.screenshot, inkedColumn: column)
+    private func rightEdges(of column: TooltipSegmentRows.Column?,
+                            rows: [TooltipSegmentRows.Row] = TooltipRenderMeasurementTests.screenshot,
+                            constrained: Bool = true) throws -> [CGFloat] {
+        let box = TooltipSegmentRows(rows: rows, inkedColumn: column)
             .padding(TooltipMetrics.padding)
-            .frame(width: TooltipMetrics.width)
+        let content = constrained
+            ? AnyView(box.frame(width: TooltipMetrics.width))
+            : AnyView(box.fixedSize())
         let renderer = ImageRenderer(content: content)
         renderer.scale = Self.scale
         let image = try #require(renderer.cgImage, "ImageRenderer produced no bitmap")

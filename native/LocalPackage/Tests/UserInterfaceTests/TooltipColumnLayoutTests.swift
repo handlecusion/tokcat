@@ -51,29 +51,14 @@ import Testing
     // MARK: - Measurement
 
     private func width(_ string: String, weight: NSFont.Weight = .regular) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: TooltipMetrics.segmentFontSize, weight: weight)
-        return (string as NSString).size(withAttributes: [.font: font]).width
+        TooltipTestSupport.width(string, weight: weight)
     }
 
-    /// Width the dot + client name cell wants before any truncation.
     private func labelCellWidth(_ name: String) -> CGFloat {
-        TooltipMetrics.dotSize + TooltipMetrics.dotLabelSpacing + width(name, weight: .medium)
+        TooltipTestSupport.labelCellWidth(name)
     }
 
-    /// The widest label the tooltip can draw, taken from `ClientRegistry` so
-    /// that adding a client re-budgets this suite instead of quietly
-    /// outgrowing a name written down here.
-    ///
-    /// Widest is measured, not counted: it is "OpenCode" at 52.13 pt, ahead of
-    /// the two characters longer "Grok Build". Round capitals beat a name with
-    /// a space and an `l` and an `i` in it. Both earlier passes at this test
-    /// reasoned from character count and named the wrong one, which is the
-    /// argument for deriving it here. The tests print whichever it is.
-    private var widestClientName: String {
-        ClientRegistry.allIDs
-            .map { ClientRegistry.style(for: $0).shortName }
-            .max { width($0, weight: .medium) < width($1, weight: .medium) } ?? ""
-    }
+    private var widestClientName: String { TooltipTestSupport.widestClientName }
 
     private func spread(_ xs: [CGFloat]) -> CGFloat { (xs.max() ?? 0) - (xs.min() ?? 0) }
 
@@ -134,27 +119,25 @@ import Testing
         let widestInScreenshot = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
         let widestPossible = labelCellWidth(widestClientName)
 
-        let overflow = widestPossible - l.labelAvailable
-
         print("#89 screenshot — label available, screenshot's widest, \(widestClientName)")
         print(line("  budget", l.labelAvailable, widestInScreenshot, widestPossible))
-        print(line("  overflow", overflow))
+        print(line("  margin", l.labelAvailable - widestPossible))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
         #expect(l.labelAvailable > widestInScreenshot,
                 "the screenshot's rows must fit without truncating a client name")
-        // The widest name the registry can produce does *not* fit these
-        // columns: "OpenCode" runs 0.30 pt over 62.83 pt and loses its last
-        // pixels to the ellipsis. That is the failure mode this PR chose —
-        // name gives, numbers hold — so it is recorded, not treated as a bug.
-        // An earlier revision asserted the opposite from an estimate, went red
-        // on CI, and was then "fixed" by narrowing the gutter to 5 pt: that
-        // moved a layout the owner had already rendered and measured, to
-        // satisfy an assertion nobody asked for. The gutter is 6 pt again and
-        // the bound here is one glyph, so a future client name that overflows
-        // by a visible amount still fails.
-        #expect(overflow < width("n", weight: .medium),
-                "the widest client name may truncate here, but only by a hair")
+        // Every name the registry can draw fits the screenshot's columns at
+        // full length — no ellipsis in the tooltip's ordinary case. Two things
+        // had to be true for this to hold, and neither on its own was enough:
+        // the label cell no longer pays for a trailing `Spacer`'s `HStack` gap
+        // (5 pt of the 5.4 pt shortfall), and `columnSpacing` is 5 rather than
+        // 6 (the other 2 pt, giving 1.70 pt of margin).
+        //
+        // This is the modelled half, kept because it prints the arithmetic and
+        // says which term moved. The claim itself belongs to the bitmap:
+        // `TooltipRenderMeasurementTests.widestClientNameRendersUntruncated`.
+        #expect(l.labelAvailable > widestPossible,
+                "\(widestClientName), the widest name the registry can draw, must not truncate")
     }
 
     /// The wide case: a 12-digit token count next to a 3-digit cost. Here the
