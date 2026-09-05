@@ -246,41 +246,15 @@ struct UsageBarChart: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             Divider()
-            // Three columns — dot+name | tokens | cost. One right-aligned
-            // "<tokens> · <cost>" string per row put every number at a
-            // different x, because only the row's right edge was fixed and
-            // everything left of it floated with that row's cost width. Grid
-            // sizes each column to its widest cell, so the numbers now read
-            // straight down. The label cell is the only flexible one, so it
-            // absorbs the slack and keeps the number columns flush right,
-            // in line with the total row above.
-            Grid(alignment: .leading,
-                 horizontalSpacing: TooltipMetrics.columnSpacing,
-                 verticalSpacing: 5) {
-                ForEach(bar.segments) { segment in
-                    let style = ClientRegistry.style(for: segment.clientId)
-                    GridRow {
-                        HStack(spacing: TooltipMetrics.dotLabelSpacing) {
-                            Circle().fill(style.color)
-                                .frame(width: TooltipMetrics.dotSize,
-                                       height: TooltipMetrics.dotSize)
-                            Text(style.shortName)
-                                .font(.system(size: TooltipMetrics.segmentFontSize,
-                                              weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            Spacer(minLength: 0)
-                        }
-                        // .fixedSize() over .minimumScaleFactor: a cell that
-                        // shrinks its own text re-breaks the column it sits
-                        // in. A row that genuinely does not fit truncates its
-                        // client name instead; the numbers never move.
-                        numberCell(NumberText.exactTokens(segment.tokens))
-                        numberCell(Formatters.formatCost(segment.cost))
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            TooltipSegmentRows(rows: bar.segments.map { segment -> TooltipSegmentRows.Row in
+                let style = ClientRegistry.style(for: segment.clientId)
+                return TooltipSegmentRows.Row(
+                    id: segment.id,
+                    name: style.shortName,
+                    tokens: NumberText.exactTokens(segment.tokens),
+                    cost: Formatters.formatCost(segment.cost),
+                    color: style.color)
+            })
         }
         .padding(TooltipMetrics.padding)
         .frame(width: TooltipMetrics.width)
@@ -300,13 +274,90 @@ struct UsageBarChart: View {
             y: max(52, barTop - 60))
         .allowsHitTesting(false)
     }
+}
 
-    private func numberCell(_ text: String) -> some View {
+/// The tooltip's per-client rows: three columns, dot+name | tokens | cost.
+///
+/// One right-aligned `"<tokens> · <cost>"` string per row put every number at
+/// a different x, because only the row's right edge was fixed and everything
+/// left of it floated with that row's cost width (issue #89). `Grid` sizes
+/// each column to its widest cell, so the numbers now read straight down. The
+/// label cell is the only flexible one, so it absorbs the slack and keeps the
+/// number columns flush right, in line with the total row above.
+///
+/// It is a view of its own — and deliberately in this file, next to its only
+/// caller — so `TooltipRenderMeasurementTests` renders the rows the tooltip
+/// actually draws rather than a copy of the layout that can drift from them.
+struct TooltipSegmentRows: View {
+    struct Row: Identifiable {
+        let id: String
+        let name: String
+        let tokens: String
+        let cost: String
+        let color: Color
+    }
+
+    /// One of the grid's three columns.
+    enum Column {
+        case label
+        case tokens
+        case cost
+    }
+
+    let rows: [Row]
+
+    /// Draws only this column's ink, leaving every cell's size and position
+    /// untouched (the other two get `.opacity(0)`). `nil` — the app's only
+    /// value — draws all three. The render measurement sets it so a column's
+    /// right edge can be read straight off the bitmap without having to tell
+    /// two columns' glyphs apart.
+    var inkedColumn: Column? = nil
+
+    var body: some View {
+        Grid(alignment: .leading,
+             horizontalSpacing: TooltipMetrics.columnSpacing,
+             verticalSpacing: 5) {
+            ForEach(rows) { row in
+                GridRow {
+                    HStack(spacing: TooltipMetrics.dotLabelSpacing) {
+                        Circle().fill(row.color)
+                            .frame(width: TooltipMetrics.dotSize,
+                                   height: TooltipMetrics.dotSize)
+                        Text(row.name)
+                            .font(.system(size: TooltipMetrics.segmentFontSize,
+                                          weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        // The one horizontally flexible cell: it takes the
+                        // slack, which is what holds the two number columns
+                        // against the content box's right edge.
+                        Spacer(minLength: 0)
+                    }
+                    .opacity(ink(.label))
+                    // .fixedSize() over .minimumScaleFactor: a cell that
+                    // shrinks its own text re-breaks the column it sits in. A
+                    // row that genuinely does not fit truncates its client
+                    // name instead; the numbers never move.
+                    numberCell(row.tokens, column: .tokens)
+                    numberCell(row.cost, column: .cost)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func ink(_ column: Column) -> Double {
+        inkedColumn == nil || inkedColumn == column ? 1 : 0
+    }
+
+    private func numberCell(_ text: String, column: Column) -> some View {
         Text(text)
             .font(.system(size: TooltipMetrics.segmentFontSize))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .fixedSize()
+            .opacity(ink(column))
+            // Read by `Grid` off the cell view itself, so it stays outermost.
             .gridColumnAlignment(.trailing)
     }
 }
