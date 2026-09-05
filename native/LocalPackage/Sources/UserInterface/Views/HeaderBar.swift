@@ -26,6 +26,21 @@ struct HeaderBar: View {
 
     @State private var spinStartedAt: Date?
 
+    /// Where `arrow.clockwise`'s arc center sits inside its layout box.
+    /// The arrowhead overshoots the ring at the top, so the ink box is
+    /// taller above the arc than below it and the default `.center` anchor
+    /// lands 0.86 pt above the circle the eye tracks (12 pt semibold) — the
+    /// glyph then orbits a 1.7 pt circle once per turn instead of spinning
+    /// in place. Measured by rendering this view with `ImageRenderer` and
+    /// least-squares fitting a circle to the ring pixels, arrowhead trimmed
+    /// as outliers: the center is horizontally centered (|dx| < 0.05 pt) and
+    /// vertically at 0.5535 / 0.5578 / 0.5591 / 0.5577 of the box height at
+    /// 11 / 12 / 18 / 24 pt — scale invariant, so one unit-space constant
+    /// serves. 0.558 is the value for the 12 pt we draw (residual < 0.01 pt);
+    /// re-measure if this ever gets reused at a very different size, and
+    /// expect only an SF Symbols redesign of the glyph to move it.
+    private static let refreshArcCenter = UnitPoint(x: 0.5, y: 0.558)
+
     /// The button drives both stores, so it has to keep spinning until the
     /// slower one lands — quota is the slower one (upstream calls plus
     /// subprocess spawns) and is usually why the user pressed Refresh.
@@ -79,9 +94,11 @@ struct HeaderBar: View {
                     TimelineView(.animation) { context in
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 12, weight: .semibold))
-                            .rotationEffect(.degrees(
-                                context.date.timeIntervalSince(startedAt)
-                                    / 0.8 * 360))
+                            .rotationEffect(
+                                .degrees(
+                                    context.date.timeIntervalSince(startedAt)
+                                        / 0.8 * 360),
+                                anchor: Self.refreshArcCenter)
                     }
                 } else {
                     Image(systemName: "arrow.clockwise")
