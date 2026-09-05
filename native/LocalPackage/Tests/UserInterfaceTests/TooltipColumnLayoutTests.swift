@@ -11,12 +11,15 @@ import Testing
 /// column the width of its widest cell and places every cell in it with the
 /// column's alignment, so `Layout` below — column width = max over rows,
 /// trailing-aligned, packed against the content box's right edge — is the
-/// arrangement the view asks for. The alignment then comes for free; what
-/// this suite measures with real font metrics is the part that does not:
-/// whether three columns and two gaps still fit the 174 pt content box at
-/// today's 190 pt tooltip width, for the screenshot's rows and for a
-/// deliberately wide one. The running app is the check that `Grid` renders
-/// this arrangement (verification 2 in the PR).
+/// arrangement the view asks for.
+///
+/// This suite is the *width budget* only: whether three columns and two gaps
+/// still fit the 174 pt content box at today's 190 pt tooltip width, for the
+/// screenshot's rows and for a deliberately wide one, and which client names
+/// survive that at full length. Asserting from `Layout` that the columns line
+/// up would be circular — that claim is `Grid`'s to keep, and
+/// `TooltipRenderMeasurementTests` checks it by rendering the real view and
+/// measuring the ink.
 ///
 /// Widths come from `NSAttributedString.size(withAttributes:)`, the way the
 /// measurements in the issue were produced. Two places sum substring widths,
@@ -38,12 +41,14 @@ import Testing
     ]
 
     /// A 12-digit token count against a 3-digit cost, per the issue's ask to
-    /// verify a wide case rather than only the screenshot's numbers. The name
-    /// is the longest one in `ClientRegistry`.
-    private static let wide = [
-        Row(name: "Synthetic", tokens: "999,999,999,999", cost: "$152.46"),
-        Row(name: "Codex", tokens: "4,092,946", cost: "$1.18"),
-    ]
+    /// verify a wide case rather than only the screenshot's numbers, carrying
+    /// the widest name the tooltip can draw.
+    private var wide: [Row] {
+        [
+            Row(name: widestClientName, tokens: "999,999,999,999", cost: "$152.46"),
+            Row(name: "Codex", tokens: "4,092,946", cost: "$1.18"),
+        ]
+    }
 
     // MARK: - Measurement
 
@@ -55,6 +60,17 @@ import Testing
     /// Width the dot + client name cell wants before any truncation.
     private func labelCellWidth(_ name: String) -> CGFloat {
         TooltipMetrics.dotSize + TooltipMetrics.dotLabelSpacing + width(name, weight: .medium)
+    }
+
+    /// The widest label the tooltip can actually draw, derived from
+    /// `ClientRegistry` so adding a client re-budgets this suite instead of
+    /// silently outgrowing a hard-coded name. `shortName` strips only
+    /// " CLI"/" Code"/" IDE", so today this is "Grok Build" — wider than
+    /// "Synthetic", and wider than the longest *display* name.
+    private var widestClientName: String {
+        ClientRegistry.allIDs
+            .map { ClientRegistry.style(for: $0).shortName }
+            .max { width($0, weight: .medium) < width($1, weight: .medium) } ?? ""
     }
 
     /// The Grid arrangement, resolved for a set of rows. All x are measured
@@ -114,49 +130,46 @@ import Testing
         #expect(costSpread > 5)
     }
 
-    // MARK: - The fix
-
-    @Test func columnLayoutGivesEveryRowTheSameX() {
-        for rows in [Self.screenshot, Self.wide] {
-            let l = layout(rows)
-            for row in rows {
-                // Trailing alignment inside a column as wide as its widest
-                // cell: every row's number ends at the column's x, and no
-                // cell has to be squeezed to get there.
-                #expect(width(row.tokens) <= l.tokensColumnRight - l.tokensColumnLeft)
-                #expect(width(row.cost) <= l.costColumnRight - l.costColumnLeft)
-            }
-        }
-
-        let l = layout(Self.screenshot)
-        print("#89 new layout — one x per column, every row:")
-        print(line("tokens L/R", l.tokensColumnLeft, l.tokensColumnRight))
-        print(line("cost L/R", l.costColumnLeft, l.costColumnRight))
-        print(line("spread", 0, 0))
-    }
+    // MARK: - The width budget
 
     @Test func columnsFitTheTooltipAtTodaysWidth() {
         let l = layout(Self.screenshot)
-        let widest = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
+        let widestInScreenshot = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
+        let widestInRegistry = labelCellWidth(widestClientName)
 
-        print(line("#89 screenshot", widest, l.labelAvailable))
+        print("#89 screenshot columns — available \(String(format: "%.2f", l.labelAvailable)) pt for the label")
+        print(line("screenshot", widestInScreenshot))
+        print(line(widestClientName, widestInRegistry))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
-        #expect(l.labelAvailable > widest,
+        #expect(l.labelAvailable > widestInScreenshot,
                 "the screenshot's rows must fit without truncating a client name")
+        // Not the screenshot's names but the registry's: this is what the fix
+        // changed the failure mode of, so it is worth locking the margin.
+        #expect(l.labelAvailable > widestInRegistry,
+                "the widest name ClientRegistry can draw (\(widestClientName)) must fit the screenshot's columns")
     }
 
-    /// The wide case: a 12-digit token count next to a 3-digit cost still
-    /// leaves the label cell its dot and a readable name. Rows wider than
-    /// that truncate the name — the numbers never move.
-    @Test func wideCaseStillFitsBothNumberColumns() {
-        let l = layout(Self.wide)
-        let shortestPlausibleLabel = labelCellWidth("Amp")
+    /// The wide case: a 12-digit token count next to a 3-digit cost. Both
+    /// number columns still fit, and what gives is the name — measured here
+    /// rather than assumed, because that is the trade the fix chose.
+    @Test func wideCaseKeepsTheNumbersAndTruncatesTheName() {
+        let l = layout(wide)
+        let widest = labelCellWidth(widestClientName)
+        let dotAndEllipsis = TooltipMetrics.dotSize + TooltipMetrics.dotLabelSpacing
+            + width("…", weight: .medium)
 
-        print(line("#89 wide", shortestPlausibleLabel, l.labelAvailable))
+        print(line("#89 wide", widest, l.labelAvailable))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
-        #expect(l.labelAvailable > shortestPlausibleLabel)
+        #expect(l.labelAvailable > dotAndEllipsis,
+                "the label cell keeps its dot and at least an ellipsis")
+        // The numbers win: at this width the widest name cannot be drawn in
+        // full and truncates with `.truncationMode(.tail)`. If this ever
+        // fails, the tooltip grew wide enough to hold it — update the
+        // expectation, nothing is broken.
+        #expect(l.labelAvailable < widest,
+                "\(widestClientName) truncates in the wide case, by design")
     }
 
     @Test func metricsMatchTheTooltipBox() {

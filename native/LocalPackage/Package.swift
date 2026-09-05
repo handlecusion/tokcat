@@ -78,8 +78,9 @@ let package = Package(
             resources: [.copy("Resources/golden.json")],
             swiftSettings: swiftSettings
         ),
-        // View-geometry budgets that would otherwise only be checkable by
-        // eye: measured with the same AppKit font metrics the views draw.
+        // View geometry that would otherwise only be checkable by eye: width
+        // budgets from the same AppKit font metrics the views draw, plus an
+        // ImageRenderer pass that measures the drawn ink of a real view.
         .testTarget(
             name: "UserInterfaceTests",
             dependencies: ["UserInterface"],
