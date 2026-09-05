@@ -328,10 +328,15 @@ struct TooltipSegmentRows: View {
                                           weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        // The one horizontally flexible cell: it takes the
-                        // slack, which is what holds the two number columns
-                        // against the content box's right edge.
-                        Spacer(minLength: 0)
+                            // The name itself is the flexible thing, so this
+                            // cell still takes the grid's slack and still holds
+                            // the two number columns against the content box's
+                            // right edge. A trailing `Spacer(minLength: 0)` did
+                            // the same job but cost a second `HStack` gap
+                            // before it — 5 pt of nothing, charged to the
+                            // cell's ideal width, which is what pushed the
+                            // widest client name into the ellipsis.
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .opacity(ink(.label))
                     // .fixedSize() over .minimumScaleFactor: a cell that
@@ -368,13 +373,19 @@ struct TooltipSegmentRows: View {
 enum TooltipMetrics {
     static let width: CGFloat = 190
     static let padding: CGFloat = 8
-    /// Gap between the label, tokens and cost columns. 6 pt is the value the
-    /// owner rendered and measured on macOS 15; the widest name the registry
-    /// can draw ("OpenCode") overflows the label cell by 0.30 pt at the
-    /// screenshot's numbers and truncates, which is this PR's chosen failure
-    /// mode — see `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth`,
-    /// which records that overflow and fails if it ever grows visible.
-    static let columnSpacing: CGFloat = 6
+    /// Gap between the label, tokens and cost columns.
+    ///
+    /// Pinned by the widest `shortName` `ClientRegistry` can draw ("OpenCode",
+    /// 52.13 pt, so a 63.25 pt label cell) standing beside the widest token
+    /// column the screenshot produces. At 6 pt the cell's share is 62.83 pt and
+    /// that name loses its tail to the ellipsis; at 5 pt it is 64.83 pt and the
+    /// name renders whole. 5 pt is also what `dotLabelSpacing` already uses, so
+    /// a right-aligned number column is no closer to its neighbour than the dot
+    /// is to the name. Moving this re-budgets
+    /// `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth` and is
+    /// measured on the bitmap by
+    /// `TooltipRenderMeasurementTests.widestClientNameRendersUntruncated`.
+    static let columnSpacing: CGFloat = 5
     static let dotSize: CGFloat = 6
     static let dotLabelSpacing: CGFloat = 5
     static let segmentFontSize: CGFloat = 10
