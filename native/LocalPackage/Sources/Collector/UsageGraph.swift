@@ -41,6 +41,7 @@ public enum UsageGraph {
         ("grok", GrokParser.parse),
         // Swift-only (no Rust counterpart); kept out of the parity rosters.
         ("omp", OmpParser.parse),
+        ("aside", AsideParser.parse),
     ]
 
     /// Port of run(): parse, optionally filter to a year, aggregate.

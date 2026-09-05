@@ -56,6 +56,7 @@ public enum ClientRegistry {
         "mux": ("Mux", "#06b6d4", nil),
         "crush": ("Crush", "#ec4899", nil),
         "synthetic": ("Synthetic", "#64748b", .full),
+        "aside": ("Aside", "#14b8a6", nil),
     ]
 
     public static func style(for id: String) -> ClientStyle {
