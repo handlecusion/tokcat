@@ -62,9 +62,12 @@ import Testing
 
     /// The widest label the tooltip can draw, taken from `ClientRegistry` so
     /// that adding a client re-budgets this suite instead of quietly
-    /// outgrowing a name written down here. `ClientStyle.shortName` strips
-    /// only `" CLI" / " Code" / " IDE"`, so `grok`'s "Grok Build" survives
-    /// whole and beats "Synthetic", "OpenClaw", "OpenCode" and "Oh My Pi".
+    /// outgrowing a name written down here — and by measured width, not by
+    /// character count: `ClientStyle.shortName` strips only `" CLI" / " Code"
+    /// / " IDE"`, which leaves `grok`'s "Grok Build" the longest name at ten
+    /// characters, but "OpenCode" is the wider one at 10 pt medium (52.13 pt
+    /// of text, measured on macOS 15) because its round glyphs beat the
+    /// narrow `r k i l d` and the space. The tests print whichever it is.
     private var widestClientName: String {
         ClientRegistry.allIDs
             .map { ClientRegistry.style(for: $0).shortName }
@@ -138,7 +141,9 @@ import Testing
                 "the screenshot's rows must fit without truncating a client name")
         // Not a name in the screenshot but the widest one the registry can
         // produce: the fix changed what happens when a row does not fit, so
-        // the margin on the real worst case is worth locking down.
+        // the margin on the real worst case is worth locking down. It failed
+        // here at `columnSpacing` 6 — 62.83 available against 63.13 wanted —
+        // and that 0.30 pt is why the constant is 5, which leaves 1.70 pt.
         #expect(l.labelAvailable > widestPossible,
                 "so must the widest name ClientRegistry can produce")
     }

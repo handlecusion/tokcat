@@ -369,7 +369,16 @@ enum TooltipMetrics {
     static let width: CGFloat = 190
     static let padding: CGFloat = 8
     /// Gap between the label, tokens and cost columns.
-    static let columnSpacing: CGFloat = 6
+    ///
+    /// Pinned by the widest name `ClientRegistry` can draw: the label cell
+    /// gets what the two number columns and these two gaps leave, and at 6 pt
+    /// that was 62.83 pt against the 63.13 pt "OpenCode" wants — 0.30 pt short,
+    /// i.e. the longest client name would have arrived truncated on the
+    /// screenshot's own numbers. 5 pt buys back the 2 pt (see
+    /// `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth`, which
+    /// fails if a future name or a wider font eats the margin again), and is
+    /// the same gap the dot already keeps from the label.
+    static let columnSpacing: CGFloat = 5
     static let dotSize: CGFloat = 6
     static let dotLabelSpacing: CGFloat = 5
     static let segmentFontSize: CGFloat = 10
