@@ -246,24 +246,18 @@ struct UsageBarChart: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             Divider()
-            ForEach(bar.segments) { segment in
+            TooltipSegmentRows(rows: bar.segments.map { segment -> TooltipSegmentRows.Row in
                 let style = ClientRegistry.style(for: segment.clientId)
-                HStack(spacing: 5) {
-                    Circle().fill(style.color).frame(width: 6, height: 6)
-                    Text(style.shortName)
-                        .font(.system(size: 10, weight: .medium))
-                    Spacer(minLength: 8)
-                    Text("\(NumberText.exactTokens(segment.tokens)) · "
-                         + Formatters.formatCost(segment.cost))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            }
+                return TooltipSegmentRows.Row(
+                    id: segment.id,
+                    name: style.shortName,
+                    tokens: NumberText.exactTokens(segment.tokens),
+                    cost: Formatters.formatCost(segment.cost),
+                    color: style.color)
+            })
         }
-        .padding(8)
-        .frame(width: 190)
+        .padding(TooltipMetrics.padding)
+        .frame(width: TooltipMetrics.width)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.thickMaterial)
@@ -275,8 +269,127 @@ struct UsageBarChart: View {
         )
         // Keep the tooltip inside the plot horizontally and above the bar.
         .position(
-            x: min(max(centerX, plotFrame.minX + 95), plotFrame.maxX - 95),
+            x: min(max(centerX, plotFrame.minX + TooltipMetrics.width / 2),
+                   plotFrame.maxX - TooltipMetrics.width / 2),
             y: max(52, barTop - 60))
         .allowsHitTesting(false)
     }
+}
+
+/// The tooltip's per-client rows: three columns, dot+name | tokens | cost.
+///
+/// One right-aligned `"<tokens> · <cost>"` string per row put every number at
+/// a different x, because only the row's right edge was fixed and everything
+/// left of it floated with that row's cost width (issue #89). `Grid` sizes
+/// each column to its widest cell, so the numbers now read straight down. The
+/// label cell is the only flexible one, so it absorbs the slack and keeps the
+/// number columns flush right, in line with the total row above.
+///
+/// It is a view of its own — and deliberately in this file, next to its only
+/// caller — so `TooltipRenderMeasurementTests` renders the rows the tooltip
+/// actually draws rather than a copy of the layout that can drift from them.
+struct TooltipSegmentRows: View {
+    struct Row: Identifiable {
+        let id: String
+        let name: String
+        let tokens: String
+        let cost: String
+        let color: Color
+    }
+
+    /// One of the grid's three columns.
+    enum Column {
+        case label
+        case tokens
+        case cost
+    }
+
+    let rows: [Row]
+
+    /// Draws only this column's ink, leaving every cell's size and position
+    /// untouched (the other two get `.opacity(0)`). `nil` — the app's only
+    /// value — draws all three. The render measurement sets it so a column's
+    /// right edge can be read straight off the bitmap without having to tell
+    /// two columns' glyphs apart.
+    var inkedColumn: Column? = nil
+
+    var body: some View {
+        Grid(alignment: .leading,
+             horizontalSpacing: TooltipMetrics.columnSpacing,
+             verticalSpacing: 5) {
+            ForEach(rows) { row in
+                GridRow {
+                    HStack(spacing: TooltipMetrics.dotLabelSpacing) {
+                        Circle().fill(row.color)
+                            .frame(width: TooltipMetrics.dotSize,
+                                   height: TooltipMetrics.dotSize)
+                        Text(row.name)
+                            .font(.system(size: TooltipMetrics.segmentFontSize,
+                                          weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            // The name itself is the flexible thing, so this
+                            // cell still takes the grid's slack and still holds
+                            // the two number columns against the content box's
+                            // right edge. A trailing `Spacer(minLength: 0)` did
+                            // the same job but cost a second `HStack` gap
+                            // before it — 5 pt of nothing, charged to the
+                            // cell's ideal width, which is what pushed the
+                            // widest client name into the ellipsis.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .opacity(ink(.label))
+                    // .fixedSize() over .minimumScaleFactor: a cell that
+                    // shrinks its own text re-breaks the column it sits in. A
+                    // row that genuinely does not fit truncates its client
+                    // name instead; the numbers never move.
+                    numberCell(row.tokens, column: .tokens)
+                    numberCell(row.cost, column: .cost)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func ink(_ column: Column) -> Double {
+        inkedColumn == nil || inkedColumn == column ? 1 : 0
+    }
+
+    private func numberCell(_ text: String, column: Column) -> some View {
+        Text(text)
+            .font(.system(size: TooltipMetrics.segmentFontSize))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(ink(column))
+            // Read by `Grid` off the cell view itself, so it stays outermost.
+            .gridColumnAlignment(.trailing)
+    }
+}
+
+/// Geometry of the hover tooltip in `UsageBarChart`. Named so the layout
+/// budget test in UserInterfaceTests measures the same box and the same font
+/// the view draws, instead of a copy of the numbers that can drift from it.
+enum TooltipMetrics {
+    static let width: CGFloat = 190
+    static let padding: CGFloat = 8
+    /// Gap between the label, tokens and cost columns.
+    ///
+    /// Pinned by the widest `shortName` `ClientRegistry` can draw ("OpenCode",
+    /// 52.13 pt, so a 63.25 pt label cell) standing beside the widest token
+    /// column the screenshot produces. At 6 pt the cell's share is 62.83 pt and
+    /// that name loses its tail to the ellipsis; at 5 pt it is 64.83 pt and the
+    /// name renders whole. 5 pt is also what `dotLabelSpacing` already uses, so
+    /// a right-aligned number column is no closer to its neighbour than the dot
+    /// is to the name. Moving this re-budgets
+    /// `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth` and is
+    /// measured on the bitmap by
+    /// `TooltipRenderMeasurementTests.widestClientNameRendersUntruncated`.
+    static let columnSpacing: CGFloat = 5
+    static let dotSize: CGFloat = 6
+    static let dotLabelSpacing: CGFloat = 5
+    static let segmentFontSize: CGFloat = 10
+
+    /// What the three columns and their two gaps have to fit into.
+    static var contentWidth: CGFloat { width - padding * 2 }
 }

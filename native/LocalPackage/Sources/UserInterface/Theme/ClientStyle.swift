@@ -59,6 +59,11 @@ public enum ClientRegistry {
         "aside": ("Aside", "#14b8a6", nil),
     ]
 
+    /// Every client id the registry knows, in a stable order. The tooltip
+    /// width budget in UserInterfaceTests derives the widest name the tooltip
+    /// can draw from this, so the budget cannot drift when a client is added.
+    static var allIDs: [String] { entries.keys.sorted() }
+
     public static func style(for id: String) -> ClientStyle {
         if let entry = entries[id] {
             // iconType is the registry's claim; ClientIconView still falls
