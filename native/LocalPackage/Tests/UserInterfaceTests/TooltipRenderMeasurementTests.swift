@@ -72,11 +72,17 @@ import Testing
 
     /// A 12-digit token count against a 3-digit cost, carrying that same name.
     /// Here the numbers take the room and the name is expected to give.
+    ///
+    /// The second row is "Amp", the *shortest* name the registry can draw, on
+    /// purpose: 12 digits leave the label cell about 40 pt, and a mid-length
+    /// name like "Codex" lands close enough to that to be a coin toss. The
+    /// floor worth asserting is the one the width budget already uses — the
+    /// shortest name plus its dot survives even the widest numbers.
     private static var wide: [TooltipSegmentRows.Row] {
         [
             TooltipSegmentRows.Row(id: "widest", name: TooltipTestSupport.widestClientName,
                                    tokens: "999,999,999,999", cost: "$152.46", color: .black),
-            TooltipSegmentRows.Row(id: "codex", name: "Codex",
+            TooltipSegmentRows.Row(id: "amp", name: "Amp",
                                    tokens: "4,092,946", cost: "$1.18", color: .black),
         ]
     }
@@ -145,9 +151,9 @@ import Testing
 
         try #require(drawn.count == ideal.count,
                      "one ink band per row in both renders")
-        for (i, (drawn, ideal)) in zip(drawn, ideal).enumerated() {
-            #expect(abs(drawn - ideal) <= 0.3,
-                    "row \(i) is truncated: ink ends at \(fmt(drawn)) pt, whole it needs \(fmt(ideal)) pt")
+        for (i, pair) in zip(drawn, ideal).enumerated() {
+            #expect(abs(pair.0 - pair.1) <= 0.3,
+                    "row \(i) is truncated: ink ends at \(fmt(pair.0)) pt, whole it needs \(fmt(pair.1)) pt")
         }
     }
 
@@ -161,7 +167,7 @@ import Testing
         let drawn = try rightEdges(of: .label, rows: Self.wide)
         let ideal = try rightEdges(of: .label, rows: Self.wide, constrained: false)
 
-        print("#89 label cell, 12-digit tokens — \(TooltipTestSupport.widestClientName)")
+        print("#89 label cell, 12-digit tokens — \(TooltipTestSupport.widestClientName), then Amp")
         print(row("in box", drawn))
         print(row("ideal", ideal))
 
