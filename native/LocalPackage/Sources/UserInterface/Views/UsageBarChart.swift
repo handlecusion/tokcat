@@ -246,24 +246,44 @@ struct UsageBarChart: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             Divider()
-            ForEach(bar.segments) { segment in
-                let style = ClientRegistry.style(for: segment.clientId)
-                HStack(spacing: 5) {
-                    Circle().fill(style.color).frame(width: 6, height: 6)
-                    Text(style.shortName)
-                        .font(.system(size: 10, weight: .medium))
-                    Spacer(minLength: 8)
-                    Text("\(NumberText.exactTokens(segment.tokens)) · "
-                         + Formatters.formatCost(segment.cost))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+            // Three columns — dot+name | tokens | cost. One right-aligned
+            // "<tokens> · <cost>" string per row put every number at a
+            // different x, because only the row's right edge was fixed and
+            // everything left of it floated with that row's cost width. Grid
+            // sizes each column to its widest cell, so the numbers now read
+            // straight down. The label cell is the only flexible one, so it
+            // absorbs the slack and keeps the number columns flush right,
+            // in line with the total row above.
+            Grid(alignment: .leading,
+                 horizontalSpacing: TooltipMetrics.columnSpacing,
+                 verticalSpacing: 5) {
+                ForEach(bar.segments) { segment in
+                    let style = ClientRegistry.style(for: segment.clientId)
+                    GridRow {
+                        HStack(spacing: TooltipMetrics.dotLabelSpacing) {
+                            Circle().fill(style.color)
+                                .frame(width: TooltipMetrics.dotSize,
+                                       height: TooltipMetrics.dotSize)
+                            Text(style.shortName)
+                                .font(.system(size: TooltipMetrics.segmentFontSize,
+                                              weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                        }
+                        // .fixedSize() over .minimumScaleFactor: a cell that
+                        // shrinks its own text re-breaks the column it sits
+                        // in. A row that genuinely does not fit truncates its
+                        // client name instead; the numbers never move.
+                        numberCell(NumberText.exactTokens(segment.tokens))
+                        numberCell(Formatters.formatCost(segment.cost))
+                    }
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(8)
-        .frame(width: 190)
+        .padding(TooltipMetrics.padding)
+        .frame(width: TooltipMetrics.width)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.thickMaterial)
@@ -275,8 +295,34 @@ struct UsageBarChart: View {
         )
         // Keep the tooltip inside the plot horizontally and above the bar.
         .position(
-            x: min(max(centerX, plotFrame.minX + 95), plotFrame.maxX - 95),
+            x: min(max(centerX, plotFrame.minX + TooltipMetrics.width / 2),
+                   plotFrame.maxX - TooltipMetrics.width / 2),
             y: max(52, barTop - 60))
         .allowsHitTesting(false)
     }
+
+    private func numberCell(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: TooltipMetrics.segmentFontSize))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .gridColumnAlignment(.trailing)
+    }
+}
+
+/// Geometry of the hover tooltip in `UsageBarChart`. Named so the layout
+/// budget test in UserInterfaceTests measures the same box and the same font
+/// the view draws, instead of a copy of the numbers that can drift from it.
+enum TooltipMetrics {
+    static let width: CGFloat = 190
+    static let padding: CGFloat = 8
+    /// Gap between the label, tokens and cost columns.
+    static let columnSpacing: CGFloat = 6
+    static let dotSize: CGFloat = 6
+    static let dotLabelSpacing: CGFloat = 5
+    static let segmentFontSize: CGFloat = 10
+
+    /// What the three columns and their two gaps have to fit into.
+    static var contentWidth: CGFloat { width - padding * 2 }
 }
