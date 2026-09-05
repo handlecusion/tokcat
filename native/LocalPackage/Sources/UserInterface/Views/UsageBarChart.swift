@@ -368,17 +368,13 @@ struct TooltipSegmentRows: View {
 enum TooltipMetrics {
     static let width: CGFloat = 190
     static let padding: CGFloat = 8
-    /// Gap between the label, tokens and cost columns.
-    ///
-    /// Pinned by the widest name `ClientRegistry` can draw: the label cell
-    /// gets what the two number columns and these two gaps leave, and at 6 pt
-    /// that was 62.83 pt against the 63.13 pt "OpenCode" wants — 0.30 pt short,
-    /// i.e. the longest client name would have arrived truncated on the
-    /// screenshot's own numbers. 5 pt buys back the 2 pt (see
-    /// `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth`, which
-    /// fails if a future name or a wider font eats the margin again), and is
-    /// the same gap the dot already keeps from the label.
-    static let columnSpacing: CGFloat = 5
+    /// Gap between the label, tokens and cost columns. 6 pt is the value the
+    /// owner rendered and measured on macOS 15; the widest name the registry
+    /// can draw ("OpenCode") overflows the label cell by 0.30 pt at the
+    /// screenshot's numbers and truncates, which is this PR's chosen failure
+    /// mode — see `TooltipColumnLayoutTests.columnsFitTheTooltipAtTodaysWidth`,
+    /// which records that overflow and fails if it ever grows visible.
+    static let columnSpacing: CGFloat = 6
     static let dotSize: CGFloat = 6
     static let dotLabelSpacing: CGFloat = 5
     static let segmentFontSize: CGFloat = 10

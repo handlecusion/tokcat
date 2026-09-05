@@ -134,25 +134,27 @@ import Testing
         let widestInScreenshot = Self.screenshot.map { labelCellWidth($0.name) }.max() ?? 0
         let widestPossible = labelCellWidth(widestClientName)
 
-        let margin = l.labelAvailable - widestPossible
+        let overflow = widestPossible - l.labelAvailable
 
         print("#89 screenshot — label available, screenshot's widest, \(widestClientName)")
         print(line("  budget", l.labelAvailable, widestInScreenshot, widestPossible))
-        print(line("  margin", margin))
+        print(line("  overflow", overflow))
         #expect(l.tokensColumnLeft > 0,
                 "both number columns must fit the 174 pt content box")
         #expect(l.labelAvailable > widestInScreenshot,
                 "the screenshot's rows must fit without truncating a client name")
-        // Not a name in the screenshot but the widest one the registry can
-        // produce, and the one the tooltip must not have to truncate on
-        // ordinary numbers. It went red here at `columnSpacing` 6 — 62.83 pt
-        // available against the 63.13 pt "OpenCode" wants — and the layout
-        // moved to meet the assertion rather than the other way round: the
-        // gutter is 5 pt now, which leaves 1.70 pt. Truncation belongs to the
-        // wide case below, where the numbers genuinely need the room; a
-        // tolerance here would stop distinguishing the two.
-        #expect(l.labelAvailable > widestPossible,
-                "so must the widest name ClientRegistry can produce")
+        // The widest name the registry can produce does *not* fit these
+        // columns: "OpenCode" runs 0.30 pt over 62.83 pt and loses its last
+        // pixels to the ellipsis. That is the failure mode this PR chose —
+        // name gives, numbers hold — so it is recorded, not treated as a bug.
+        // An earlier revision asserted the opposite from an estimate, went red
+        // on CI, and was then "fixed" by narrowing the gutter to 5 pt: that
+        // moved a layout the owner had already rendered and measured, to
+        // satisfy an assertion nobody asked for. The gutter is 6 pt again and
+        // the bound here is one glyph, so a future client name that overflows
+        // by a visible amount still fails.
+        #expect(overflow < width("n", weight: .medium),
+                "the widest client name may truncate here, but only by a hair")
     }
 
     /// The wide case: a 12-digit token count next to a 3-digit cost. Here the

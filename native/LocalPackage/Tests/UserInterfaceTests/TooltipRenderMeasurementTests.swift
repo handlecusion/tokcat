@@ -21,12 +21,6 @@ import Testing
 ///     cost   173.12 173.12 173.12 173.12   spread 0.000
 ///     tokens 127.12 127.62 127.75 127.88   spread 0.750
 ///
-/// Those x's were read with `TooltipMetrics.columnSpacing` at 6; it is 5 now
-/// (the widest client name did not fit the label cell at 6), so the tokens
-/// column sits one point further right — ~128.1 — while the cost column, which
-/// is flush against the content box, does not move. Both budgets below are on
-/// the spread within a column, so neither is affected; the run prints the x's.
-///
 /// The 0.75 pt on the tokens column is not misalignment: SF's digits are
 /// proportional, so a number ending in `1` leaves more right side bearing
 /// than one ending in `6`. The advances are aligned; the ink is ragged by
