@@ -146,6 +146,10 @@ the PR body.
 - Add or update tests in `native/LocalPackage/Tests` for logic you touch.
 - Commit in focused commits with short imperative subjects (see `git log`).
   Push `claude/issue-<N>`.
+- **You cannot build this project.** The session VM is Linux; `native/` needs
+  Swift, AppKit and SwiftUI, so nothing you write compiles or runs here. CI on
+  the macOS runners is your compiler — see step 4. Never claim a Swift change
+  builds, and never call a UI change verified, on the strength of reading it.
 
 ### 3. Open the pull request
 
@@ -169,6 +173,25 @@ the PR body.
 - Comment on the issue with the PR link. Labels: add `claude:pr-open`, remove
   `claude:running` and `claude:needs-info`.
 
+### 4. Iterate against CI until it is green
+
+CI (`.github/workflows/ci.yml`, `macos-14`/`macos-15`) is the first machine that
+compiles your work. Treat a push as a build request, not a delivery:
+
+- After pushing, poll the check runs for your head SHA
+  (`list_workflow_runs` / `get_job_logs`, or `gh pr checks <PR> --watch`).
+  `Swift build + test` takes ~2 minutes.
+- Red? Read the failing job's log, fix, push, poll again. Up to **3** such
+  rounds; if it is still red, stop and post exactly which check fails, the
+  failing assertion or diagnostic, and what you think it needs. A red PR you
+  described honestly is fine; a red PR you handed off silently is not.
+- Green ≠ verified for anything visual. It means it compiles and the tests
+  pass. Say which parts still need a human at a Mac, and prefer tests that
+  measure the thing (e.g. `ImageRenderer` + ink measurement for layout) over
+  tests that restate a model you just wrote — the latter cannot fail.
+- Do the same in FOLLOW_UP: every push you make goes through this loop before
+  your summary comment.
+
 ## kind = FOLLOW_UP
 
 The owner replied with `@claude`. The triggering comment/review is at the top of
@@ -189,6 +212,7 @@ cannot read their transcripts — the thread and the branch are your state).
 
 ## When you are done
 
-Your last post on the thread is the hand-off. The owner merges by approving the
+Your last post on the thread is the hand-off, and it comes *after* step 4 — CI
+green, or a plain statement of what is red and why. The owner merges by approving the
 PR or adding the `approved` label; the harness then enables auto-merge and CI
 decides. Nothing else is expected from you.
