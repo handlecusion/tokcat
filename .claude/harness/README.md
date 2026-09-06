@@ -39,6 +39,8 @@
 | `scripts/claude-harness/build-payload.py` | 이슈/PR + 토론 + 문서·스펙을 한 텍스트로 조립 |
 | `scripts/claude-harness/fire.sh` | `/fire` 호출, 429/5xx 재시도, 세션 ID/URL 출력 |
 | `scripts/claude-harness/finish.sh` | 머지된 PR의 연결 이슈를 닫고 하네스 라벨(`claude`, `claude:*`) 제거. 멱등 |
+| `scripts/claude-harness/routine-text.sh` | 루틴 프롬프트 박스에 넣을 전체 텍스트(부트스트랩 + 스냅샷) 생성 |
+| `.claude/harness/BOOTSTRAP.md` | 각 루틴의 부트스트랩 참조 사본 — 권위본은 루틴에만 있다 |
 | `.claude/harness/ROUTINE_PROMPT.md` | 이슈 위임 세션이 따르는 지침의 원본. 클론에 있으면 claude.ai에 저장된 사본보다 우선 |
 | `.claude/harness/REVIEW_PROMPT.md` | PR 자동 리뷰 세션의 지침 원본 (같은 우선순위 규칙) |
 
@@ -48,8 +50,11 @@
 
 1. **루틴 (이슈 위임)**: https://claude.ai/code/routines/trig_01QJ58u3U5nURAPzWJtXytGp — "tokcat · Claude harness (issue delegation)".
    저장소 `handlecusion/tokcat`, 모델 `claude-opus-5`, 환경 `askai`(Trusted 네트워크; GitHub는 프록시 경유).
-   저장된 프롬프트는 `ROUTINE_PROMPT.md`의 스냅샷이고, 클론에 이 파일이 있으면 파일이 우선한다.
-   파일을 고치면 루틴의 스냅샷도 같은 내용으로 갱신해 둘 것(웹 편집 또는 CLI `/schedule update`).
+   저장된 프롬프트는 **부트스트랩 + `ROUTINE_PROMPT.md` 스냅샷**이고, 클론에 프롬프트 파일이 있으면 파일이 우선한다.
+   부트스트랩은 세션을 `origin/main`으로 보내고 발화 페이로드를 데이터로 못 박는 문단이며 **루틴에만 존재한다**
+   (`.claude/harness/`를 고치는 PR이 자신을 심판할 규칙까지 고치지 못하게). 프롬프트를 고친 뒤 스냅샷을 갱신할 때는
+   반드시 `scripts/claude-harness/routine-text.sh dispatch`(또는 `review`) 출력을 통째로 붙여넣을 것 —
+   스냅샷만 붙이면 부트스트랩이 지워진다(2026-09-06에 실제로 그랬고 리뷰 루틴 사본에서 복원했다).
 2. **API 트리거 토큰**: 루틴 편집 → *Add another trigger* → *API* → *Generate token*. URL과 토큰을
    저장소 시크릿에 넣는다 (토큰은 한 번만 보인다):
    ```sh
