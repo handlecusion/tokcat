@@ -18,10 +18,6 @@ public final class StatusItemController: NSObject {
     private static let iconPointSize: CGFloat = 18
     private static let iconXOffset: CGFloat = 8
 
-    // Where macOS stores the item's spot, and the copy of the value we last
-    // wrote there ourselves (so a user drag is distinguishable from it).
-    private static let positionKey = "NSStatusItem Preferred Position Item-0"
-    private static let seededPositionKey = "TokcatSeededStatusItemPosition"
     private static let fallbackPosition = 200.0
 
     private var statusItem: NSStatusItem
@@ -33,7 +29,10 @@ public final class StatusItemController: NSObject {
     private var screenObserver: (any NSObjectProtocol)?
     private var hiddenChecks = 0
     private var lastRecoveryAt = Date.distantPast
-    private var preservedUserPosition = false
+    // Where macOS keeps the item's spot, and the user position the last rebuild
+    // left in place — cleared as soon as the item is seen on screen again.
+    private let positions = StatusItemPositionStore()
+    private var preservedPosition: Double?
 
     public var onLeftClick: (() -> Void)?
     public var menuProvider: (() -> NSMenu)?
@@ -41,7 +40,11 @@ public final class StatusItemController: NSObject {
     public var button: NSStatusBarButton? { statusItem.button }
 
     public override init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Before the first item exists: AppKit reads the position preference
+        // when it places the item, so a pre-autosaveName drag has to be on the
+        // autosave key by then or the user's slot is lost for this launch.
+        StatusItemPositionStore().migrateLegacyPositionIfNeeded()
+        statusItem = StatusItemController.makeStatusItem()
         super.init()
         configureItem()
         startVisibilityWatch()
@@ -54,6 +57,17 @@ public final class StatusItemController: NSObject {
                 MainActor.assumeIsolated { self?.logDiagnostics() }
             }
         }
+    }
+
+    // A stable autosaveName is what keys the position preference to a name we
+    // control: AppKit's generated "Item-N" is positional, and it does not
+    // reliably survive removeStatusItem() or quit, so a Cmd-drag could be lost
+    // on a plain relaunch and on every hidden-item rebuild.
+    private static func makeStatusItem() -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(
+            withLength: NSStatusItem.variableLength)
+        item.autosaveName = StatusItemPositionStore.autosaveName
+        return item
     }
 
     private func configureItem() {
@@ -79,8 +93,8 @@ public final class StatusItemController: NSObject {
 
     // MARK: - Hidden-item recovery
     //
-    // macOS persists each status item's preferred position ("NSStatusItem
-    // Preferred Position Item-0"). After a display-layout change (undocking
+    // macOS persists each status item's preferred position (see
+    // StatusItemPositionStore). After a display-layout change (undocking
     // a notched MacBook, narrower bar) that position can land inside the
     // app-menu zone or the notch — the item's window is then parked far
     // off-screen and macOS NEVER re-places it, even when space frees up,
@@ -125,6 +139,11 @@ public final class StatusItemController: NSObject {
     private func checkVisibility() {
         guard isEffectivelyHidden else {
             hiddenChecks = 0
+            // The item is reachable on the position it currently has, so that
+            // position is not the cause of any later hiding. Forgetting it here
+            // is what keeps an unrelated second rebuild — display sleep, a
+            // dock/undock round trip — from reseating a slot the user chose.
+            preservedPosition = nil
             return
         }
         hiddenChecks += 1
@@ -144,8 +163,7 @@ public final class StatusItemController: NSObject {
         runner.removeFromSuperlayer()
         NSStatusBar.system.removeStatusItem(statusItem)
         reseatPositionIfNeeded()
-        statusItem = NSStatusBar.system.statusItem(
-            withLength: NSStatusItem.variableLength)
+        statusItem = Self.makeStatusItem()
         configureItem()
     }
 
@@ -156,16 +174,16 @@ public final class StatusItemController: NSObject {
     // system items, in the always-visible region. See StatusItemPlacement for
     // when the stored position is left alone instead.
     private func reseatPositionIfNeeded() {
-        let defaults = UserDefaults.standard
+        // Read fresh: a drag performed between two rebuilds must re-arm the
+        // preserve branch rather than look like the position we already tried.
         let decision = StatusItemPlacement.decide(
-            stored: defaults.object(forKey: Self.positionKey) as? Double,
-            seeded: defaults.object(forKey: Self.seededPositionKey) as? Double,
-            alreadyPreserved: preservedUserPosition,
+            stored: positions.storedPosition,
+            seeded: positions.seededPosition,
+            preserved: preservedPosition,
             fallback: Self.fallbackPosition)
-        preservedUserPosition = decision.preservedUserPosition
+        preservedPosition = decision.preserve
         guard let seatAt = decision.seatAt else { return }
-        defaults.set(seatAt, forKey: Self.positionKey)
-        defaults.set(seatAt, forKey: Self.seededPositionKey)
+        positions.seat(at: seatAt)
     }
 
     private var diagTimer: Timer?
