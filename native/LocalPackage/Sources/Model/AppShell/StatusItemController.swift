@@ -60,9 +60,11 @@ public final class StatusItemController: NSObject {
     }
 
     // A stable autosaveName is what keys the position preference to a name we
-    // control: AppKit's generated "Item-N" is positional, and it does not
-    // reliably survive removeStatusItem() or quit, so a Cmd-drag could be lost
-    // on a plain relaunch and on every hidden-item rebuild.
+    // control, instead of AppKit's generated and positional "Item-N". Measured
+    // on macOS 26: with the name set, the status bar reads and writes
+    // "NSStatusItem Preferred Position TokcatStatusItem" and leaves the
+    // generated key untouched — including when it restores the slot on launch,
+    // even though the name can only be assigned after the item is created.
     private static func makeStatusItem() -> NSStatusItem {
         let item = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.variableLength)
@@ -99,10 +101,11 @@ public final class StatusItemController: NSObject {
     // app-menu zone or the notch — the item's window is then parked far
     // off-screen and macOS NEVER re-places it, even when space frees up,
     // while `isVisible` keeps reporting true. Reproduced deterministically
-    // by seeding a large preferred position. A freshly created item with no
-    // stored position always takes the first free slot on the right, so the
-    // recovery is: detect the parked state, drop the stored position, and
-    // rebuild the item (reusing the runner layer + stored title/state).
+    // by seeding a large preferred position. The recovery is: detect the parked
+    // state, rebuild the item (reusing the runner layer + stored title/state),
+    // and seat it — at the user's own position on the first try, at the
+    // fallback slot once that position has demonstrably failed to bring it
+    // back. See StatusItemPlacement.
 
     // Parked means the item's window sits outside every screen. Occlusion is
     // NOT a usable signal here: the menu bar legitimately disappears in
@@ -159,31 +162,39 @@ public final class StatusItemController: NSObject {
 
     private func recreateItem() {
         NSLog("Tokcat: status item parked off-screen; rebuilding it")
+        // Read before removing: removeStatusItem() clears the item's saved
+        // position, so after that call there is nothing left to preserve and
+        // the placement rule would only ever see nil.
+        let stored = positions.storedPosition
         appearanceObservation = nil
         runner.removeFromSuperlayer()
         NSStatusBar.system.removeStatusItem(statusItem)
-        reseatPositionIfNeeded()
+        reseatPosition(stored: stored)
         statusItem = Self.makeStatusItem()
         configureItem()
     }
 
-    // The fallback value is the distance from the RIGHT edge. Removing the
-    // preference doesn't help: a brand-new item is inserted at the LEFT end of
-    // the status area, which on a crowded bar is exactly the hidden zone it
-    // just died in (verified empirically). A small offset lands it beside the
-    // system items, in the always-visible region. See StatusItemPlacement for
-    // when the stored position is left alone instead.
-    private func reseatPositionIfNeeded() {
-        // Read fresh: a drag performed between two rebuilds must re-arm the
-        // preserve branch rather than look like the position we already tried.
+    // The fallback value is the distance from the RIGHT edge. Leaving the
+    // preference empty doesn't help: a brand-new item with no stored position
+    // is inserted at the LEFT end of the status area, which on a crowded bar is
+    // exactly the hidden zone it just died in (verified empirically). A small
+    // offset lands it beside the system items, in the always-visible region.
+    //
+    // A position is therefore always written — the removal above cleared the
+    // key — and the only question StatusItemPlacement answers is whether that
+    // position is the user's own or our fallback slot.
+    private func reseatPosition(stored: Double?) {
         let decision = StatusItemPlacement.decide(
-            stored: positions.storedPosition,
+            stored: stored,
             seeded: positions.seededPosition,
             preserved: preservedPosition,
             fallback: Self.fallbackPosition)
         preservedPosition = decision.preserve
-        guard let seatAt = decision.seatAt else { return }
-        positions.seat(at: seatAt)
+        if decision.seatsOurOwnValue {
+            positions.seat(at: decision.seatAt)
+        } else {
+            positions.restore(at: decision.seatAt)
+        }
     }
 
     private var diagTimer: Timer?

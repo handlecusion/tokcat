@@ -3,11 +3,11 @@ import Testing
 
 @testable import Model
 
-// The status item now carries a stable autosaveName, so macOS keys its slot off
-// a name we control instead of AppKit's positional "Item-0". These pin the
-// upgrade path (a drag recorded under the old key is not thrown away) and the
-// both-keys handling that keeps hidden-item recovery working if a macOS version
-// ignores the autosave name.
+// The status item carries a stable autosaveName, so macOS keys its slot off a
+// name we control instead of AppKit's positional "Item-0". These pin the
+// upgrade path (a drag recorded under the old key is not thrown away, and is
+// not re-applied later over a newer one) and the single-source-of-truth rule:
+// the legacy key is a migration input, never a second copy to read back.
 @Suite struct StatusItemPositionStoreTests {
     private let fallback = 200.0
 
@@ -62,42 +62,77 @@ import Testing
         }
     }
 
-    // If macOS keeps maintaining the generated key, a drag recorded there still
-    // has to read as a drag — the value that differs from what we seated wins.
-    @Test func prefersAStoredValueThatIsNotTheOneWeSeated() throws {
+    // Removing a status item clears the autosave key, so "that key is empty"
+    // cannot stand in for "we never migrated" — a launch starting from a cleared
+    // key would otherwise copy the stale Item-0 value back over a newer drag.
+    @Test func migrationRunsOnlyOnceEvenIfTheAutosaveKeyIsClearedLater() throws {
         try withStore { store, defaults in
-            store.seat(at: fallback)
-            #expect(store.storedPosition == fallback)
-            #expect(store.seededPosition == fallback)
-            // AppKit records the user's drag under the legacy key only.
+            defaults.set(640.0, forKey: StatusItemPositionStore.legacyPositionKey)
+            store.migrateLegacyPositionIfNeeded()
+            #expect(store.storedPosition == 640)
+
+            // The user drags to 900; a rebuild's removal then clears the key.
+            defaults.set(900.0, forKey: StatusItemPositionStore.positionKey)
+            defaults.removeObject(forKey: StatusItemPositionStore.positionKey)
+            store.migrateLegacyPositionIfNeeded()
+            #expect(store.storedPosition == nil)
+        }
+    }
+
+    // The legacy key is a migration input, not a fallback source. Reading it
+    // back as "the stored position" is what let a rebuild seat a stale value the
+    // user had already dragged away from.
+    @Test func aLegacyValueAloneIsNotAStoredPosition() throws {
+        try withStore { store, defaults in
             defaults.set(720.0, forKey: StatusItemPositionStore.legacyPositionKey)
+            #expect(store.storedPosition == nil)
+            store.migrateLegacyPositionIfNeeded()
             #expect(store.storedPosition == 720)
         }
     }
 
-    // The mirror image: the autosave key is the live one and the legacy key is
-    // the stale copy seating left behind.
-    @Test func prefersTheAutosaveKeyWhenThatIsWhereTheDragLanded() throws {
+    @Test func seatingRecordsTheValueAsOursAndLeavesTheLegacyKeyAlone() throws {
         try withStore { store, defaults in
-            store.seat(at: fallback)
-            defaults.set(720.0, forKey: StatusItemPositionStore.positionKey)
-            #expect(store.storedPosition == 720)
-        }
-    }
-
-    // Seating writes both keys: a fallback written only to the autosave key
-    // would silently fail to move the item on a macOS version that ignores it.
-    @Test func seatingWritesBothKeysAndRecordsTheValueAsOurs() throws {
-        try withStore { store, defaults in
+            defaults.set(640.0, forKey: StatusItemPositionStore.legacyPositionKey)
             store.seat(at: fallback)
             #expect(defaults.object(
                 forKey: StatusItemPositionStore.positionKey) as? Double == fallback)
             #expect(defaults.object(
-                forKey: StatusItemPositionStore.legacyPositionKey)
+                forKey: StatusItemPositionStore.seededPositionKey)
                 as? Double == fallback)
+            #expect(store.seededPosition == fallback)
+            // Never written: macOS does not maintain it once autosaveName is set.
+            #expect(defaults.object(
+                forKey: StatusItemPositionStore.legacyPositionKey)
+                as? Double == 640)
+        }
+    }
+
+    // Putting the user's own position back must not claim it. If `restore`
+    // stamped the seeded marker, the next rebuild would read 500 as a value
+    // Tokcat seated and drop the fallback on top of it — the #94 snap-back,
+    // one rebuild later.
+    @Test func restoringAUserPositionDoesNotClaimItAsOurs() throws {
+        try withStore { store, defaults in
+            store.seat(at: fallback)
+            store.restore(at: 500)
+            #expect(store.storedPosition == 500)
+            #expect(store.seededPosition == fallback)
             #expect(defaults.object(
                 forKey: StatusItemPositionStore.seededPositionKey)
                 as? Double == fallback)
+        }
+    }
+
+    // The whole point of restoring: the removal cleared the key, and the value
+    // has to be back on file before the replacement item is created or the bar
+    // parks it off-screen.
+    @Test func restoringRepopulatesAClearedKey() throws {
+        try withStore { store, _ in
+            // Nothing on file: the removal that starts the rebuild cleared it.
+            #expect(store.storedPosition == nil)
+            store.restore(at: 611)
+            #expect(store.storedPosition == 611)
         }
     }
 }
