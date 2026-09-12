@@ -13,6 +13,10 @@
 //   tokcat-dump tail-live [--ticks N] [--window-secs N]
 //     dev smoke: runs the live tailer against the real environment for N
 //     ticks (5s apart) and prints the observed rates.
+//   tokcat-dump cloud-probe [--days N]
+//     dev measurement: compares the three candidate sources for cloud-session
+//     usage (local transcripts, `codex cloud list`, quota windows) and prints
+//     the per-source numbers as JSON. See Collector/CloudSessions.swift.
 import Collector
 import DataSource
 import Foundation
@@ -26,6 +30,7 @@ let usageText = """
 usage: tokcat-dump graph [--year YYYY] [--clients a,b]
        tokcat-dump tail-sim --dir DIR [--window-secs N] [--now-ms N]
        tokcat-dump tail-live [--ticks N] [--window-secs N]
+       tokcat-dump cloud-probe [--days N]
 """
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -214,6 +219,28 @@ case "tail-live":
         semaphore.signal()
     }
     semaphore.wait()
+
+case "cloud-probe":
+    var days = 14
+    var only: [String] = []
+    var skipNetwork = false
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--days":
+            days = Int(intFlag("--days", args, &i))
+        case "--only":
+            i += 1
+            guard i < args.count else { fail("--only requires marker:variant[:headBytes]") }
+            only.append(args[i])
+        case "--no-network":
+            skipNetwork = true
+        default:
+            fail("unknown arg: \(args[i])")
+        }
+        i += 1
+    }
+    runCloudProbe(days: max(days, 1), only: only, skipNetwork: skipNetwork)
 
 default:
     fail(usageText)
