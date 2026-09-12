@@ -70,35 +70,41 @@ public enum UsageGraph {
             messages.append(contentsOf: entry.parse(cache))
         }
         cache?.endRun()
-        // inferProvider and bundledPrice are pure per (model, provider) but
-        // string-scan heavy; memoize across the ~10^5-message pass.
-        var providerCache: [String: String] = [:]
-        var priceCache: [String: Price] = [:]
-        return dedupMessages(messages).compactMap { msg -> UsageMessage? in
-            var msg = msg
-            if msg.timestampMs <= 0 || msg.totalTokens <= 0 { return nil }
-            if rustTrim(msg.providerId).isEmpty {
-                if let provider = providerCache[msg.modelId] {
-                    msg.providerId = provider
-                } else {
-                    let provider = inferProvider(msg.modelId)
-                    providerCache[msg.modelId] = provider
-                    msg.providerId = provider
-                }
+        return applyPricing(dedupMessages(messages))
+    }
+}
+
+/// Pipeline tail shared by the graph and the cloud-session probe: drop
+/// timestamp-less/empty rows, infer the provider, then price the tokens.
+/// `inferProvider` and `bundledPrice` are pure per (model, provider) but
+/// string-scan heavy; memoize across the ~10^5-message pass.
+func applyPricing(_ messages: [UsageMessage]) -> [UsageMessage] {
+    var providerCache: [String: String] = [:]
+    var priceCache: [String: Price] = [:]
+    return messages.compactMap { msg -> UsageMessage? in
+        var msg = msg
+        if msg.timestampMs <= 0 || msg.totalTokens <= 0 { return nil }
+        if rustTrim(msg.providerId).isEmpty {
+            if let provider = providerCache[msg.modelId] {
+                msg.providerId = provider
+            } else {
+                let provider = inferProvider(msg.modelId)
+                providerCache[msg.modelId] = provider
+                msg.providerId = provider
             }
-            if msg.cost <= 0.0 {
-                let key = "\(msg.modelId)\u{0}\(msg.providerId)"
-                let price: Price
-                if let cached = priceCache[key] {
-                    price = cached
-                } else {
-                    price = bundledPrice(model: msg.modelId, provider: msg.providerId)
-                    priceCache[key] = price
-                }
-                msg.cost = estimateCost(price: price, tokens: msg.tokens)
-            }
-            return msg
         }
+        if msg.cost <= 0.0 {
+            let key = "\(msg.modelId)\u{0}\(msg.providerId)"
+            let price: Price
+            if let cached = priceCache[key] {
+                price = cached
+            } else {
+                price = bundledPrice(model: msg.modelId, provider: msg.providerId)
+                priceCache[key] = price
+            }
+            msg.cost = estimateCost(price: price, tokens: msg.tokens)
+        }
+        return msg
     }
 }
 

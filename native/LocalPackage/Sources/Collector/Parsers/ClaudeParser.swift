@@ -8,15 +8,11 @@ enum ClaudeParser: UsageParser {
 
     static func parse(_ cache: UsageCache?) -> [UsageMessage] {
         guard let home = homeDir() else { return [] }
-        let roots = [
-            joinPath(joinPath(home, ".claude"), "projects"),
-            joinPath(joinPath(home, ".claude"), "transcripts"),
-        ]
         // Files parse independently (the merge map below is per-file), so
         // parse concurrently; parseFilesInOrder keeps the roots-then-sorted
         // concatenation order the downstream first-wins dedup depends on.
         var files: [String] = []
-        for root in roots {
+        for root in claudeTranscriptRoots(home) {
             files.append(contentsOf: collectFiles(root) { p in
                 let ext = rustExtension(p)
                 return ext == "jsonl" || ext == "json"

@@ -132,6 +132,16 @@ func xdgDataHome(_ home: String) -> String {
     return joinPath(joinPath(home, ".local"), "share")
 }
 
+/// Claude Code transcript roots. Cloud sessions bridged to this Mac land in
+/// the same tree as local ones (`projects/<cwd slug>/<session>.jsonl`), which
+/// is why the graph can only tell them apart by content or slug.
+func claudeTranscriptRoots(_ home: String) -> [String] {
+    [
+        joinPath(joinPath(home, ".claude"), "projects"),
+        joinPath(joinPath(home, ".claude"), "transcripts"),
+    ]
+}
+
 /// Port of orca_codex_homes (usage_graph.rs:2251-2281): every immediate
 /// child of `<data dir>/orca/codex-runtime-home/` holding a sessions or
 /// archived_sessions directory.
