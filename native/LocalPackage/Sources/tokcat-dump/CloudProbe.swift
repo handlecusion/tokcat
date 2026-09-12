@@ -105,6 +105,7 @@ struct CloudShare: Encodable {
 }
 
 struct SourceB: Encodable {
+    // Inventory: which cloud tasks exist (no usage in this payload).
     var command: String
     var exitCode: Int32?
     var wallMs: Double
@@ -112,17 +113,72 @@ struct SourceB: Encodable {
     var tasks: Int
     var taskFields: [String]
     var usageBearingFields: [String]
-    var detail: String?
+    var inventoryError: String?
+    // Daily usage: plan percent by product surface, cloud surfaces split out.
+    var usageCommand: String
+    var usageWallMs: Double
+    var units: String?
+    var days: Int
+    var cloudDays: Int
+    var cloudTotalPercent: Double
+    var localTotalPercent: Double
+    var dayDetail: [CloudDayPercent]
+    var usageError: String?
+    /// Tokens-per-percent implied by the local surfaces, and the cloud token
+    /// estimate it would produce. Calibration, not measurement.
+    var calibration: [CalibrationDay]
+    var impliedTokensPerPercent: Double?
+    var cloudTokensEstimate: Int64?
 
     enum CodingKeys: String, CodingKey {
-        case command
+        case command, tasks, units, days, calibration
         case exitCode = "exit_code"
         case wallMs = "wall_ms"
         case stdoutBytes = "stdout_bytes"
-        case tasks
         case taskFields = "task_fields"
         case usageBearingFields = "usage_bearing_fields"
-        case detail
+        case inventoryError = "inventory_error"
+        case usageCommand = "usage_command"
+        case usageWallMs = "usage_wall_ms"
+        case cloudDays = "cloud_days"
+        case cloudTotalPercent = "cloud_total_percent"
+        case localTotalPercent = "local_total_percent"
+        case dayDetail = "day_detail"
+        case usageError = "usage_error"
+        case impliedTokensPerPercent = "implied_tokens_per_percent"
+        case cloudTokensEstimate = "cloud_tokens_estimate"
+    }
+}
+
+struct CloudDayPercent: Encodable {
+    var date: String
+    var cloudPercent: Double
+    var localPercent: Double
+    var cloudSurfaces: [String: Double]
+    var localSurfaces: [String: Double]
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case cloudPercent = "cloud_percent"
+        case localPercent = "local_percent"
+        case cloudSurfaces = "cloud_surfaces"
+        case localSurfaces = "local_surfaces"
+    }
+}
+
+/// One day of the calibration: what the account's own percent says about the
+/// local surfaces vs what Tokcat counted from local logs.
+struct CalibrationDay: Encodable {
+    var date: String
+    var localPercent: Double
+    var localTokens: Int64
+    var tokensPerPercent: Double
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case localPercent = "local_percent"
+        case localTokens = "local_tokens"
+        case tokensPerPercent = "tokens_per_percent"
     }
 }
 
@@ -152,7 +208,7 @@ func runCloudProbe(days: Int, only: [String], skipNetwork: Bool) {
         let output = CloudProbeOutput(
             measuredAt: ISO8601DateFormatter().string(from: Date()),
             sourceA: measureSourceA(days: days, only: only),
-            sourceB: skipNetwork ? nil : measureSourceB(),
+            sourceB: skipNetwork ? nil : await measureSourceB(),
             sourceC: skipNetwork ? nil : await measureSourceC())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
@@ -300,14 +356,88 @@ private func measureSourceA(days: Int, only: [String]) -> SourceA {
 
 // MARK: - B. codex cloud task list
 
-private func measureSourceB() -> SourceB {
-    let args = ["cloud", "list", "--json", "--limit", "20"]
-    let result = runCommand("/usr/bin/env", ["codex"] + args, timeout: 30)
+private func measureSourceB() async -> SourceB {
+    let inventory = measureCloudTaskInventory()
+    var usage = SourceB(
+        command: inventory.command, exitCode: inventory.exitCode, wallMs: inventory.wallMs,
+        stdoutBytes: inventory.stdoutBytes, tasks: inventory.tasks,
+        taskFields: inventory.taskFields, usageBearingFields: inventory.usageBearingFields,
+        inventoryError: inventory.error,
+        usageCommand: "CodexCloudUsageProvider.fetch(days: 90)", usageWallMs: 0,
+        units: nil, days: 0, cloudDays: 0, cloudTotalPercent: 0, localTotalPercent: 0,
+        dayDetail: [], usageError: nil, calibration: [],
+        impliedTokensPerPercent: nil, cloudTokensEstimate: nil)
+
+    let start = DispatchTime.now().uptimeNanoseconds
+    do {
+        let report = try await CodexCloudUsageProvider.fetch(days: 90)
+        usage.usageWallMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000.0
+        usage.units = report.units
+        usage.days = report.days.count
+        usage.cloudDays = report.cloudDays
+        usage.cloudTotalPercent = report.cloudTotalPercent
+        usage.localTotalPercent = report.localTotalPercent
+        usage.dayDetail = report.days.filter {
+            $0.cloudPercent > 0 || $0.localPercent > 0
+        }.map { day in
+            var cloud: [String: Double] = [:]
+            var local: [String: Double] = [:]
+            for (surface, value) in day.surfaces where value > 0 {
+                if codexCloudSurfaces.contains(surface) {
+                    cloud[surface] = value
+                } else {
+                    local[surface] = value
+                }
+            }
+            return CloudDayPercent(
+                date: day.date, cloudPercent: day.cloudPercent,
+                localPercent: day.localPercent, cloudSurfaces: cloud, localSurfaces: local)
+        }
+    } catch {
+        usage.usageWallMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000.0
+        usage.usageError = "\(error)"
+    }
+
+    // Calibration: the account's percent for the local surfaces vs the tokens
+    // Tokcat parsed from the same days' local logs. A stable ratio would let a
+    // cloud percent be read as tokens; scatter means it cannot.
+    let localTokensByDate = localCodexTokensByDate()
+    var calibration: [CalibrationDay] = []
+    for day in usage.dayDetail where day.localPercent > 0 {
+        guard let tokens = localTokensByDate[day.date], tokens > 0 else { continue }
+        calibration.append(
+            CalibrationDay(
+                date: day.date, localPercent: day.localPercent, localTokens: tokens,
+                tokensPerPercent: Double(tokens) / day.localPercent))
+    }
+    usage.calibration = calibration
+    let ratios = calibration.map(\.tokensPerPercent).sorted()
+    if let median = ratios.isEmpty ? nil : ratios[ratios.count / 2] {
+        usage.impliedTokensPerPercent = median
+        usage.cloudTokensEstimate = Int64(usage.cloudTotalPercent * median)
+    }
+    return usage
+}
+
+private struct CloudTaskInventory {
+    var command: String
+    var exitCode: Int32?
+    var wallMs: Double
+    var stdoutBytes: Int
+    var tasks: Int
+    var taskFields: [String]
+    var usageBearingFields: [String]
+    var error: String?
+}
+
+private func measureCloudTaskInventory() -> CloudTaskInventory {
+    let result = runCommand("/usr/bin/env", ["codex", "cloud", "list", "--json", "--limit", "20"],
+        timeout: 30)
     guard let result else {
-        return SourceB(
+        return CloudTaskInventory(
             command: "codex cloud list --json --limit 20", exitCode: nil, wallMs: 0,
             stdoutBytes: 0, tasks: 0, taskFields: [], usageBearingFields: [],
-            detail: "codex not found or timed out")
+            error: "codex not found or timed out")
     }
     var fields: [String] = []
     var usageFields: [String] = []
@@ -325,15 +455,21 @@ private func measureSourceB() -> SourceB {
                 || lowered.contains("cost")
         }
     }
-    return SourceB(
+    return CloudTaskInventory(
         command: "codex cloud list --json --limit 20",
-        exitCode: result.exitCode,
-        wallMs: result.wallMs,
-        stdoutBytes: result.stdout.count,
-        tasks: tasks,
-        taskFields: fields,
-        usageBearingFields: usageFields,
-        detail: result.exitCode == 0 ? nil : String(data: result.stderr, encoding: .utf8))
+        exitCode: result.exitCode, wallMs: result.wallMs, stdoutBytes: result.stdout.count,
+        tasks: tasks, taskFields: fields, usageBearingFields: usageFields,
+        error: result.exitCode == 0 ? nil : String(data: result.stderr, encoding: .utf8))
+}
+
+/// Tokcat's own per-day codex tokens, for the calibration join.
+private func localCodexTokensByDate() -> [String: Int64] {
+    guard let payload = try? UsageGraph.run(year: "", clients: ["codex"]) else { return [:] }
+    var out: [String: Int64] = [:]
+    for contribution in payload.contributions {
+        out[contribution.date] = contribution.totals.tokens
+    }
+    return out
 }
 
 // MARK: - C. quota windows
