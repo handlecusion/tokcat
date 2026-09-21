@@ -1,3 +1,5 @@
+
+
 <h1 align="center">Tokcat</h1>
 
 <p align="center">
@@ -14,7 +16,7 @@
   <a href="https://github.com/handlecusion/tokcat/stargazers"><img src="https://img.shields.io/github/stars/handlecusion/tokcat?style=flat-square" alt="Stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence"></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-black?style=flat-square&logo=apple" alt="macOS 13+">
-  <img src="https://img.shields.io/badge/universal-arm64%20%2B%20x86__64-success?style=flat-square" alt="Universal binary">
+  <img src="https://img.shields.io/badge/universal-arm64%20%2B%20x86_64-success?style=flat-square" alt="Universal binary">
   <img src="https://img.shields.io/badge/built%20with-Swift%20%2F%20SwiftUI-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift / SwiftUI">
 </p>
 
