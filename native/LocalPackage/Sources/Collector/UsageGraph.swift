@@ -41,6 +41,7 @@ public enum UsageGraph {
         ("grok", GrokParser.parse),
         // Swift-only (no Rust counterpart); kept out of the parity rosters.
         ("omp", OmpParser.parse),
+        ("omnirush", OmnirushParser.parse),
         ("aside", AsideParser.parse),
     ]
 

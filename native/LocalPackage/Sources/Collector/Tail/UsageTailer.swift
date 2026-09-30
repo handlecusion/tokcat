@@ -13,6 +13,8 @@ import Foundation
 // Grok Build:   $GROK_HOME/sessions/**/updates.jsonl
 // oh-my-pi:     ~/.omp/agent/sessions/**/*.jsonl (subagent transcripts are
 //               nested one level deeper, inside the parent session's dir)
+// omnirush:     ~/.omnirush/agent/sessions/**/*.jsonl (subagent transcripts
+//               live in a `subagents/` dir beside their parent session)
 // Cursor:       no local ledger — Model's CursorLiveProvider diffs
 //               GetAggregatedUsageEvents and calls `ingest`.
 // Aside:        ~/.aside/u/<account>/sessions/**/messages.jsonl
@@ -22,6 +24,7 @@ let tailClientCodex = "codex-cli"
 let tailClientHermes = "hermes"
 let tailClientGrok = "grok"
 let tailClientOmp = "omp"
+let tailClientOmnirush = "omnirush"
 let tailClientAside = "aside"
 let eventWindowSecs: Int64 = 3600  // EVENT_WINDOW_SECS (:26)
 let coldScanLookbackSecs: Int64 = 6 * 3600  // COLD_SCAN_LOOKBACK_SECS (:27)
@@ -36,6 +39,7 @@ enum TailClientKind: Equatable, Sendable {
     case codex
     case grok
     case omp
+    case omnirush
     case aside
 }
 
@@ -393,6 +397,8 @@ public actor UsageTailer {
                                          emitFirstAsDelta: grokEmitFirst)
             case .omp:
                 recorded = parseOmpLine(path: path, raw: trimmed)
+            case .omnirush:
+                recorded = parseOmnirushLine(path: path, raw: trimmed)
             case .aside:
                 recorded = parseAsideLine(raw: trimmed)
             }
@@ -574,6 +580,48 @@ public actor UsageTailer {
                        model: model, input: input, output: output,
                        cacheRead: cacheRead, cacheWrite: cacheWrite),
             dedupKey: responseId.isEmpty ? "" : "omp:\(responseId)")
+    }
+
+    // MARK: - omnirush lines
+
+    /// omnirush session entries (same engine and format as omp). Every
+    /// assistant `message` carries the usage of exactly one API response —
+    /// per-call values, not a running total — so each line is emitted as-is
+    /// with no threaded state.
+    private func parseOmnirushLine(path: String, raw: [UInt8]) -> Bool {
+        guard let value = JSONValue.parse(Data(raw)) else { return false }
+        guard value["type"]?.asString == "message" else { return false }
+        guard let message = value["message"] else { return false }
+        guard message["role"]?.asString == "assistant" else { return false }
+        guard let usage = message["usage"] else { return false }
+
+        let input = strictI64(usage["input"]) ?? 0
+        let output = strictI64(usage["output"]) ?? 0
+        let cacheRead = strictI64(usage["cacheRead"]) ?? 0
+        let cacheWrite = strictI64(usage["cacheWrite"]) ?? 0
+        if input + output + cacheRead + cacheWrite <= 0 { return false }
+
+        let model = tailNormalizeModel(message["model"]?.asString ?? "unknown")
+        // Spelled out rather than chained through `map`/`??`: the autoclosure
+        // operands captured `value` alongside the actor-isolated `now()`, which
+        // the Release-configuration concurrency checker rejects as a send.
+        let tsMs: Int64
+        if let epochMs = strictI64(message["timestamp"]) {
+            tsMs = normalizeEpochMs(epochMs)
+        } else if let iso = value["timestamp"]?.asString,
+            let parsed = rfc3339ToTimestampMs(iso)
+        {
+            tsMs = parsed
+        } else {
+            tsMs = now()
+        }
+        let responseId = message["responseId"]?.asString ?? ""
+
+        return pushEvent(
+            UsageEvent(tsMs: tsMs, client: tailClientOmnirush, agent: omnirushTailAgent(path),
+                       model: model, input: input, output: output,
+                       cacheRead: cacheRead, cacheWrite: cacheWrite),
+            dedupKey: responseId.isEmpty ? "" : "omnirush:\(responseId)")
     }
 
     // MARK: - Aside lines
@@ -819,6 +867,8 @@ public actor UsageTailer {
             if isDirectory(grok) { out.append((grok, .grok)) }
             let omp = joinPath(joinPath(joinPath(sim, ".omp"), "agent"), "sessions")
             if isDirectory(omp) { out.append((omp, .omp)) }
+            let omnirush = joinPath(joinPath(joinPath(sim, ".omnirush"), "agent"), "sessions")
+            if isDirectory(omnirush) { out.append((omnirush, .omnirush)) }
             for root in asideSessionRoots(in: [joinPath(sim, ".aside")]) {
                 out.append((root, .aside))
             }
@@ -854,6 +904,13 @@ public actor UsageTailer {
             guard seenOmpRoots.insert(root).inserted else { continue }
             if isDirectory(root) { out.append((root, .omp)) }
         }
+        // omnirush: likewise, including its OMNIRUSH_AGENT_DIR/OMNIRUSH_DIR
+        // (or TOKCAT_OMNIRUSH_HOMES) overrides.
+        var seenOmnirushRoots = Set<String>()
+        for root in omnirushSessionRoots() {
+            guard seenOmnirushRoots.insert(root).inserted else { continue }
+            if isDirectory(root) { out.append((root, .omnirush)) }
+        }
         // Aside: one sessions root per signed-in account.
         for root in asideSessionRoots() {
             out.append((root, .aside))
@@ -884,6 +941,19 @@ private func tailGrokSessionsRoot() -> String? {
     guard let home = homeDir() else { return nil }
     let p = joinPath(joinPath(home, ".grok"), "sessions")
     return isDirectory(p) ? p : nil
+}
+
+/// omnirush subagent transcripts sit in a `subagents` directory under the cwd
+/// bucket and are named `<timestamp>_<sessionId>.jsonl`; the main transcript is
+/// the sibling of that directory. Unlike omp, the child's agent name is not
+/// recorded anywhere in the transcript (only the parent session id), so these
+/// rows share the plain `subagent` label.
+func omnirushTailAgent(_ path: String) -> String {
+    let parent = (path as NSString).deletingLastPathComponent
+    guard let bucket = rustFileName(parent), omnirushIsSubagentDirName(bucket) else {
+        return "main"
+    }
+    return "subagent"
 }
 
 /// omp subagent transcripts live inside their parent session's directory and
