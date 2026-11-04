@@ -84,7 +84,7 @@ private func zcodeUsageInsert(
         #expect(messages.count == 1)
         let msg = try #require(messages.first)
         #expect(msg.client == "zcode")
-        #expect(msg.modelId == "GLM-5.3-Flash")
+        #expect(msg.modelId == "glm-5.3-flash")
         #expect(msg.providerId == "account:zai-start-plan")
         #expect(msg.timestampMs == 1_793_289_642_829)
         // input is the non-cached portion: 101653 - 99264
@@ -115,16 +115,17 @@ private func zcodeUsageInsert(
         defer { try? FileManager.default.removeItem(at: home) }
         try makeZCodeDatabase(at: home, rows: [
             zcodeUsageInsert(id: "flash-1", input: 50_000, output: 500,
-                             cacheRead: 40_000, computed: 10_500),
+                             cacheRead: 40_000, computed: 50_500),
             zcodeUsageInsert(id: "big-1", model: "GLM-5.3", input: 120_000,
-                             output: 2_000, cacheRead: 110_000, computed: 12_000),
+                             output: 2_000, cacheRead: 110_000, computed: 122_000),
         ])
 
         let messages = ZCodeParser.parse(cache: nil, home: home.path)
         #expect(messages.count == 2)
-        #expect(Set(messages.map { $0.modelId }) == ["GLM-5.3-Flash", "GLM-5.3"])
-        // Totals equal the computed columns, not the inclusive input sums.
-        #expect(messages.reduce(0) { $0 + $1.tokens.total } == 22_500)
+        #expect(Set(messages.map { $0.modelId }) == ["glm-5.3-flash", "glm-5.3"])
+        // Totals equal the computed columns: input (inclusive of cache reads)
+        // + output. flash-1: 50000 + 500 = 50500; big-1: 120000 + 2000 = 122000.
+        #expect(messages.reduce(0) { $0 + $1.tokens.total } == 172_500)
     }
 
     @Test func missingDatabaseYieldsNothing() throws {
