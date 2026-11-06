@@ -46,7 +46,7 @@ case "graph":
     // Default to the full ten-client roster so both dump CLIs stay comparable
     // even if one side's registry grows first; --clients still overrides.
     var clients: [String]? = [
-        "claude", "codex", "cursor", "opencode", "gemini",
+        "claude", "codex", "cursor", "opencode", "zcode", "gemini",
         "copilot", "amp", "droid", "hermes", "grok",
     ]
     var i = 0
