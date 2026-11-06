@@ -71,6 +71,11 @@ public enum UsageGraph {
             messages.append(contentsOf: entry.parse(cache))
         }
         cache?.endRun()
+        return priceMessages(messages)
+    }
+
+    /// Shared post-parse pipeline, also exercised with isolated parser fixtures.
+    static func priceMessages(_ messages: [UsageMessage]) -> [UsageMessage] {
         // inferProvider and bundledPrice are pure per (model, provider) but
         // string-scan heavy; memoize across the ~10^5-message pass.
         var providerCache: [String: String] = [:]

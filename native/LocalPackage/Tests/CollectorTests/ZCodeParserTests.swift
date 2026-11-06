@@ -128,6 +128,53 @@ private func zcodeUsageInsert(
         #expect(messages.reduce(0) { $0 + $1.tokens.total } == 172_500)
     }
 
+    @Test func apiEstimatesReachExistingTotals() throws {
+        let home = try zcodeTempDir("cost")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try makeZCodeDatabase(at: home, rows: [
+            zcodeUsageInsert(id: "flash", model: "  Z-AI/GLM-5.3-Flash  ",
+                             input: 1_000_000, output: 200_000, reasoning: 50_000,
+                             cacheWrite: 100_000, cacheRead: 600_000, computed: 1_350_000),
+            zcodeUsageInsert(id: "big", model: "GLM-5.3", provider: "z.ai",
+                             input: 1_000_000, output: 200_000, reasoning: 50_000,
+                             cacheWrite: 100_000, cacheRead: 600_000, computed: 1_350_000),
+        ])
+        let messages = UsageGraph.priceMessages(ZCodeParser.parse(cache: nil, home: home.path))
+        let flash = try #require(messages.first { $0.modelId == "z-ai/glm-5.3-flash" })
+        #expect(flash.providerId == "account:zai-start-plan")
+        #expect(flash.tokens.input == 400_000)
+        #expect(flash.tokens.output == 200_000)
+        #expect(flash.tokens.reasoning == 50_000)
+        #expect(flash.tokens.cacheRead == 600_000)
+        #expect(flash.tokens.cacheWrite == 100_000)
+        #expect(flash.tokens.total == 1_350_000)
+        // Flash: .06 + .125 + .018 + .015; flagship: .56 + 1.1 + .156 + .14.
+        #expect(abs(flash.cost - 0.218) < 1e-10)
+        let payload = buildPayload(messages)
+        #expect(payload.summary.totalTokens == 2_700_000)
+        #expect(abs(payload.summary.totalCost - 2.174) < 1e-10)
+        let day = try #require(payload.contributions.first)
+        #expect(abs(day.totals.cost - 2.174) < 1e-10)
+        #expect(abs(day.clients.reduce(0) { $0 + $1.cost } - 2.174) < 1e-10)
+        #expect(abs(try #require(payload.years.first).totalCost - 2.174) < 1e-10)
+    }
+
+    @Test func pricesAreNormalizedAndProviderScoped() {
+        for provider in ["z.ai", "zai", "z-ai", "account:zai-start-plan", " Z.AI "] {
+            for model in ["GLM-5.3", "glm_5_3", "z-ai/GLM-5.3"] {
+                #expect(bundledPrice(model: model, provider: provider) == Price(1.4, 4.4, 0.26, 1.4))
+            }
+            #expect(bundledPrice(model: "GLM-5.3-Flash", provider: provider)
+                    == Price(0.15, 0.5, 0.03, 0.15))
+            // Do not accidentally price FlashX or future variants as Flash/flagship.
+            #expect(bundledPrice(model: "GLM-5.3-FlashX", provider: provider) == Price(0, 0, 0, 0))
+        }
+        #expect(bundledPrice(model: "GLM-5.3", provider: "openai") == Price(1.25, 10, 0.125, 0))
+        #expect(bundledPrice(model: "GLM-5.3-Flash", provider: "openrouter") == Price(0, 0, 0, 0))
+        #expect(bundledPrice(model: "GLM-4.7", provider: "z.ai") == Price(0.6, 2.2, 0.11, 0))
+        #expect(bundledPrice(model: "claude-sonnet-4", provider: "anthropic").cacheWrite == 3.75)
+    }
+
     @Test func missingDatabaseYieldsNothing() throws {
         let home = try zcodeTempDir("empty")
         defer { try? FileManager.default.removeItem(at: home) }
