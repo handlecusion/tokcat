@@ -175,7 +175,7 @@ the PR body.
 
 ### 4. Iterate against CI until it is green
 
-CI (`.github/workflows/ci.yml`, `macos-14`/`macos-15`) is the first machine that
+CI (`.github/workflows/ci.yml`, `macos-15`) is the first machine that
 compiles your work. Treat a push as a build request, not a delivery:
 
 - After pushing, poll the check runs for your head SHA
