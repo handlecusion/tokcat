@@ -89,8 +89,90 @@ struct ClaudeExtraUsage: Decodable {
     }
 }
 
+/// One row of the usage endpoint's `limits` array.
+///
+/// Newer per-model weekly limits arrive only here, not as a `seven_day_*`
+/// field: `{"kind": "weekly_scoped", "percent": 24, "resets_at": "…",
+/// "scope": {"model": {"display_name": "Fable"}}}`. The server owns which
+/// rows exist, so a new model needs no change here.
+///
+/// Decoding never throws. The array is newer than the fixed fields and its
+/// shape may still move, and a row this app cannot read must not cost the
+/// user the windows it can.
+struct ClaudeLimit: Decodable, Equatable {
+    var kind: String?
+    var percent: Double?
+    var resetsAt: String?
+    var modelName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case percent
+        case resetsAt = "resets_at"
+        case scope
+    }
+
+    private struct Scope: Decodable {
+        var model: Model?
+
+        enum CodingKeys: String, CodingKey { case model }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            model = (try? container.decodeIfPresent(Model.self, forKey: .model)) ?? nil
+        }
+    }
+
+    private struct Model: Decodable {
+        var displayName: String?
+
+        enum CodingKeys: String, CodingKey { case displayName = "display_name" }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            displayName = (try? container.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
+        }
+    }
+
+    init(kind: String?, percent: Double?, resetsAt: String?, modelName: String?) {
+        self.kind = kind
+        self.percent = percent
+        self.resetsAt = resetsAt
+        self.modelName = modelName
+    }
+
+    init(from decoder: any Decoder) throws {
+        // A row that is not an object (a string, a number) decodes as empty.
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(kind: nil, percent: nil, resetsAt: nil, modelName: nil)
+            return
+        }
+        let scope = (try? container.decodeIfPresent(Scope.self, forKey: .scope)) ?? nil
+        self.init(
+            kind: (try? container.decodeIfPresent(String.self, forKey: .kind)) ?? nil,
+            percent: container.lenientDouble(.percent),
+            resetsAt: (try? container.decodeIfPresent(String.self, forKey: .resetsAt)) ?? nil,
+            modelName: scope?.model?.displayName)
+    }
+}
+
+/// The `limits` array, read so that a value of the wrong type (an object, a
+/// string) is an empty list instead of a decode error for the whole response.
+struct ClaudeLimits: Decodable, Equatable {
+    var rows: [ClaudeLimit]
+
+    init(rows: [ClaudeLimit]) {
+        self.rows = rows
+    }
+
+    init(from decoder: any Decoder) throws {
+        rows = (try? decoder.singleValueContainer().decode([ClaudeLimit].self)) ?? []
+    }
+}
+
 /// Mirror of the Rust struct with every alias field; the first-non-nil
-/// chains live in `designWindow` / `routinesWindow` (:1212-1242).
+/// chains live in `designWindow` / `routinesWindow` (:1212-1242). `limits`
+/// has no Rust counterpart: the endpoint added it after the port.
 struct ClaudeUsageResponse: Decodable {
     var fiveHour: ClaudeWindow?
     var sevenDay: ClaudeWindow?
@@ -112,6 +194,7 @@ struct ClaudeUsageResponse: Decodable {
     var sevenDayCowork: ClaudeWindow?
     var cowork: ClaudeWindow?
     var extraUsage: ClaudeExtraUsage?
+    var limits: ClaudeLimits?
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
@@ -134,6 +217,7 @@ struct ClaudeUsageResponse: Decodable {
         case sevenDayCowork = "seven_day_cowork"
         case cowork
         case extraUsage = "extra_usage"
+        case limits
     }
 
     init(fiveHour: ClaudeWindow? = nil, sevenDay: ClaudeWindow? = nil,
@@ -145,7 +229,8 @@ struct ClaudeUsageResponse: Decodable {
          sevenDayRoutines: ClaudeWindow? = nil, sevenDayClaudeRoutines: ClaudeWindow? = nil,
          claudeRoutines: ClaudeWindow? = nil, routines: ClaudeWindow? = nil,
          routine: ClaudeWindow? = nil, sevenDayCowork: ClaudeWindow? = nil,
-         cowork: ClaudeWindow? = nil, extraUsage: ClaudeExtraUsage? = nil) {
+         cowork: ClaudeWindow? = nil, extraUsage: ClaudeExtraUsage? = nil,
+         limits: ClaudeLimits? = nil) {
         self.fiveHour = fiveHour
         self.sevenDay = sevenDay
         self.sevenDayOauthApps = sevenDayOauthApps
@@ -166,6 +251,7 @@ struct ClaudeUsageResponse: Decodable {
         self.sevenDayCowork = sevenDayCowork
         self.cowork = cowork
         self.extraUsage = extraUsage
+        self.limits = limits
     }
 
     /// First-non-nil alias chain for the Designs window.
@@ -440,7 +526,8 @@ public enum ClaudeQuotaProvider {
 
     // MARK: Window mapping
 
-    /// Port of `claude_windows` (:1192-1210).
+    /// Port of `claude_windows` (:1192-1210), plus the per-model weekly rows
+    /// that only `limits` carries (see `scopedModelWindows`).
     static func claudeWindows(_ usage: ClaudeUsageResponse, now: Date) -> [UsageWindow] {
         var windows: [UsageWindow] = []
         appendWindow(&windows, label: "Session", window: usage.fiveHour, now: now)
@@ -448,12 +535,55 @@ public enum ClaudeQuotaProvider {
         appendWindow(&windows, label: "OAuth Apps", window: usage.sevenDayOauthApps, now: now)
         appendWindow(&windows, label: "Sonnet", window: usage.sevenDaySonnet, now: now)
         appendWindow(&windows, label: "Opus", window: usage.sevenDayOpus, now: now)
+        // Per-model rows from `limits` sit with the other per-model rows.
+        let modelRowsEnd = windows.count
         appendWindow(&windows, label: "Designs", window: usage.designWindow, now: now)
         appendWindow(&windows, label: "Daily Routines", window: usage.routinesWindow, now: now)
         if let extra = claudeExtraUsageWindow(usage.extraUsage) {
             windows.append(extra)
         }
+        let scoped = scopedModelWindows(
+            usage.limits?.rows ?? [], takenLabels: windows.map(\.label), now: now)
+        windows.insert(contentsOf: scoped, at: modelRowsEnd)
         return windows
+    }
+
+    /// Weekly limits for one model (`kind == "weekly_scoped"` with a model
+    /// scope), labelled with the server's display name, in the server's order.
+    ///
+    /// Rows scoped to something else (a surface) are left out: the fixed
+    /// fields already cover those under this app's own labels, and there is no
+    /// reliable way to match the two names.
+    ///
+    /// A name already in `takenLabels` is skipped, compared without case.
+    /// That keeps the fixed `seven_day_sonnet` / `seven_day_opus` rows as the
+    /// single source when the server sends both forms, and keeps labels
+    /// unique, which the limits card and the plan-window setting rely on.
+    static func scopedModelWindows(
+        _ limits: [ClaudeLimit], takenLabels: [String], now: Date
+    ) -> [UsageWindow] {
+        var taken = Set(takenLabels.map(labelKey))
+        var windows: [UsageWindow] = []
+        for limit in limits where limit.kind == "weekly_scoped" {
+            guard let name = limit.modelName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !name.isEmpty,
+                !taken.contains(labelKey(name)),
+                let window = mapClaudeWindow(
+                    label: name,
+                    window: ClaudeWindow(utilization: limit.percent, resetsAt: limit.resetsAt),
+                    now: now)
+            else { continue }
+            taken.insert(labelKey(name))
+            windows.append(window)
+        }
+        return windows
+    }
+
+    /// Key two labels share when they differ only by case. Case folding, not
+    /// `lowercased()`, so "Straße" and "STRASSE" count as one label too.
+    private static func labelKey(_ label: String) -> String {
+        label.folding(options: .caseInsensitive, locale: nil)
     }
 
     private static func appendWindow(
