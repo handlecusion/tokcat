@@ -165,6 +165,188 @@ private func date(_ epochSeconds: Int64) -> Date {
             == ["Session", "Weekly", "Sonnet", "Designs", "Daily Routines"])
     }
 
+    /// The shape the endpoint returns for an account whose only per-model
+    /// weekly limit is a newer model: the fixed per-model fields are null and
+    /// the limit exists only as a `weekly_scoped` row in `limits`.
+    @Test func scopedModelLimitBecomesAWindow() throws {
+        let raw = """
+            {
+                "five_hour": null,
+                "seven_day": { "utilization": 27.0, "resets_at": "2026-05-31T14:00:00.401948+00:00" },
+                "seven_day_opus": null,
+                "seven_day_sonnet": null,
+                "extra_usage": { "is_enabled": false, "monthly_limit": null },
+                "limits": [
+                    {
+                        "kind": "weekly_all", "group": "weekly", "percent": 27,
+                        "severity": "normal",
+                        "resets_at": "2026-05-31T14:00:00.401948+00:00",
+                        "scope": null, "is_active": true
+                    },
+                    {
+                        "kind": "weekly_scoped", "group": "weekly", "percent": 24,
+                        "severity": "normal",
+                        "resets_at": "2026-05-31T14:00:00.402098+00:00",
+                        "scope": {
+                            "model": { "id": null, "display_name": "Fable" },
+                            "surface": null
+                        },
+                        "is_active": false
+                    }
+                ],
+                "weekly_scoped_shares": [
+                    { "limit_index": 1, "used_percent_of_weekly": 12 }
+                ]
+            }
+            """
+        let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(raw.utf8))
+        // 2026-05-30T14:00:00Z, one day before the reset.
+        let windows = ClaudeQuotaProvider.claudeWindows(usage, now: date(1_780_149_600))
+        #expect(windows.map(\.label) == ["Weekly", "Fable"])
+        #expect(windows[1].usedPercent == 24)
+        #expect(windows[1].remainingPercent == 76)
+        #expect(windows[1].resetsAt == "2026-05-31T14:00:00.402Z")
+        #expect(windows[1].resetText != nil)
+    }
+
+    /// Scoped rows sit with the other per-model rows, in the server's order,
+    /// and never repeat a row the fixed fields already produced.
+    @Test func scopedModelLimitsAreOrderedAndDeduplicated() throws {
+        let raw = """
+            {
+                "five_hour": { "utilization": 5, "resets_at": null },
+                "seven_day": { "utilization": 23, "resets_at": null },
+                "seven_day_sonnet": { "utilization": 3, "resets_at": null },
+                "seven_day_omelette": { "utilization": 0, "resets_at": null },
+                "limits": [
+                    { "kind": "session", "percent": 5, "scope": null },
+                    { "kind": "weekly_all", "percent": 23, "scope": null },
+                    { "kind": "weekly_scoped", "percent": 90,
+                      "scope": { "model": { "display_name": "sonnet" } } },
+                    { "kind": "weekly_scoped", "percent": 40,
+                      "scope": { "model": { "display_name": "Fable" } } },
+                    { "kind": "weekly_scoped", "percent": 10,
+                      "scope": { "model": { "display_name": " Saga " } } },
+                    { "kind": "weekly_scoped", "percent": 99,
+                      "scope": { "model": { "display_name": "FABLE" } } },
+                    { "kind": "weekly_scoped", "percent": 50,
+                      "scope": { "model": { "display_name": "Designs" } } }
+                ]
+            }
+            """
+        let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(raw.utf8))
+        let windows = ClaudeQuotaProvider.claudeWindows(usage, now: date(1_700_000_000))
+        #expect(windows.map(\.label)
+            == ["Session", "Weekly", "Sonnet", "Fable", "Saga", "Designs"])
+        // The fixed field wins over a scoped row of the same name.
+        #expect(windows[2].usedPercent == 3)
+        // The first row of a repeated name wins.
+        #expect(windows[3].usedPercent == 40)
+        #expect(windows[4].usedPercent == 10)
+        // "Designs" is the fixed design window, not the scoped row.
+        #expect(windows[5].usedPercent == 0)
+    }
+
+    /// Every fixed row blocks a scoped row of its name, including the rows
+    /// placed after the scoped ones, and names are compared by case folding.
+    @Test func scopedModelLimitsNeverRepeatALabel() throws {
+        let raw = """
+            {
+                "seven_day": { "utilization": 10, "resets_at": null },
+                "seven_day_opus": { "utilization": 11, "resets_at": null },
+                "seven_day_cowork": { "utilization": 12, "resets_at": null },
+                "extra_usage": { "is_enabled": true, "utilization": 13 },
+                "limits": [
+                    { "kind": "weekly_scoped", "percent": 91,
+                      "scope": { "model": { "display_name": "weekly" } } },
+                    { "kind": "weekly_scoped", "percent": 92,
+                      "scope": { "model": { "display_name": "OPUS" } } },
+                    { "kind": "weekly_scoped", "percent": 93,
+                      "scope": { "model": { "display_name": "daily routines" } } },
+                    { "kind": "weekly_scoped", "percent": 94,
+                      "scope": { "model": { "display_name": "Extra Usage" } } },
+                    { "kind": "weekly_scoped", "percent": 20,
+                      "scope": { "model": { "display_name": "Straße" } } },
+                    { "kind": "weekly_scoped", "percent": 95,
+                      "scope": { "model": { "display_name": "STRASSE" } } },
+                    { "kind": "weekly_scoped", "percent": -5,
+                      "scope": { "model": { "display_name": "Negative" } } }
+                ]
+            }
+            """
+        let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(raw.utf8))
+        let windows = ClaudeQuotaProvider.claudeWindows(usage, now: date(1_700_000_000))
+        #expect(windows.map(\.label)
+            == ["Weekly", "Opus", "Straße", "Negative", "Daily Routines", "Extra usage"])
+        #expect(windows.map(\.usedPercent) == [10, 11, 20, 0, 12, 13])
+        // A value below the bar's range is clamped like one above it.
+        #expect(windows[3].remainingPercent == 100)
+    }
+
+    /// Rows this app cannot read are skipped one by one; they never fail the
+    /// response or hide the windows that did decode.
+    @Test func unreadableLimitRowsAreSkipped() throws {
+        let raw = """
+            {
+                "seven_day": { "utilization": 10, "resets_at": null },
+                "limits": [
+                    "not a row",
+                    42,
+                    null,
+                    { "kind": "weekly_scoped", "percent": 30, "scope": "Fable" },
+                    { "kind": "weekly_scoped", "percent": 30, "scope": { "model": "Fable" } },
+                    { "kind": "weekly_scoped", "percent": 30,
+                      "scope": { "model": { "display_name": 7 } } },
+                    { "kind": "weekly_scoped", "percent": 30,
+                      "scope": { "model": { "display_name": "   " } } },
+                    { "kind": "weekly_scoped", "percent": 30,
+                      "scope": { "model": null,
+                                 "surface": { "display_name": "Design" } } },
+                    { "kind": "weekly_scoped", "percent": null,
+                      "scope": { "model": { "display_name": "NoPercent" } } },
+                    { "kind": "weekly_scoped", "percent": {},
+                      "scope": { "model": { "display_name": "BadPercent" } } },
+                    { "kind": "monthly_scoped", "percent": 30,
+                      "scope": { "model": { "display_name": "OtherKind" } } },
+                    { "kind": 3, "percent": 30,
+                      "scope": { "model": { "display_name": "BadKind" } } },
+                    { "kind": "weekly_scoped", "percent": "150", "resets_at": 12,
+                      "scope": { "model": { "display_name": "Fable" } } }
+                ]
+            }
+            """
+        let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(raw.utf8))
+        #expect(usage.limits?.rows.count == 13)
+        let windows = ClaudeQuotaProvider.claudeWindows(usage, now: date(1_700_000_000))
+        #expect(windows.map(\.label) == ["Weekly", "Fable"])
+        // A numeric string is read like the fixed fields read it, and the
+        // value is clamped to the bar's range.
+        #expect(windows[1].usedPercent == 100)
+        #expect(windows[1].remainingPercent == 0)
+        #expect(windows[1].resetsAt == nil)
+    }
+
+    /// `limits` of the wrong type, null or missing leaves the fixed windows
+    /// exactly as they were before the field was read.
+    @Test func limitsOfTheWrongTypeAreIgnored() throws {
+        for limits in [#""limits": { "weekly_scoped": [] },"#, #""limits": "none","#,
+                       #""limits": null,"#, #""limits": [],"#, ""] {
+            let raw = """
+                {
+                    \(limits)
+                    "five_hour": { "utilization": 8, "resets_at": null },
+                    "seven_day_opus": { "utilization": 12, "resets_at": null }
+                }
+                """
+            let usage = try JSONDecoder().decode(ClaudeUsageResponse.self, from: Data(raw.utf8))
+            let windows = ClaudeQuotaProvider.claudeWindows(usage, now: date(1_700_000_000))
+            #expect(windows == [
+                UsageWindow(label: "Session", usedPercent: 8, remainingPercent: 92),
+                UsageWindow(label: "Opus", usedPercent: 12, remainingPercent: 88),
+            ])
+        }
+    }
+
     @Test func extraUsageWindowAndCredits() throws {
         let raw = """
             {
