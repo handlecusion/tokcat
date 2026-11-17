@@ -214,6 +214,22 @@ func bundledPrice(model: String, provider: String) -> Price {
     if terminal.hasPrefix("o4") {
         return Price(2.0, 8.0, 0.5, 0.0)
     }
+    // Z.ai API-equivalent estimates, USD / 1M tokens (verified 2026-11-06).
+    // https://docs.z.ai/guides/overview/pricing
+    // https://docs.z.ai/guides/capabilities/cache
+    // New cache content uses the input rate; cache hits use the cached rate.
+    // Coding Plan subscriptions/credits are NOT billed at these API rates.
+    // Scope to Z.ai providers so other hosts retain their existing pricing.
+    let zaiProvider = rustTrim(provider).lowercased()
+    if ["z.ai", "zai", "z-ai"].contains(zaiProvider)
+        || zaiProvider.hasPrefix("account:zai-")
+    {
+        switch terminal {
+        case "glm-5-3-flash": return Price(0.15, 0.50, 0.03, 0.15)
+        case "glm-5-3": return Price(1.40, 4.40, 0.26, 1.40)
+        default: break
+        }
+    }
     if normalized.contains("glm-4-7-flashx") {
         return Price(0.07, 0.4, 0.01, 0.0)
     }

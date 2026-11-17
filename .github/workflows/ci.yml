@@ -72,6 +72,7 @@ jobs:
 
       - name: xcodegen + app build
         run: |
+          set -euo pipefail
           brew install xcodegen
           cd native
           xcodegen generate

@@ -39,6 +39,7 @@ public enum ClientRegistry {
         "openclaw": ("OpenClaw", "#dc2626", nil),
         "gemini": ("Gemini CLI", "#60a5fa", .mono),
         "opencode": ("OpenCode", "#1f2937", .full),
+        "zcode": ("ZCode", "#7c3aed", .mono),
         "codex": ("Codex CLI", "#9ca3af", .full),
         "copilot": ("Copilot CLI", "#1f2937", .mono),
         "cursor": ("Cursor IDE", "#0ea5e9", .mono),
