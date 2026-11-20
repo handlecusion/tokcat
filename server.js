@@ -239,6 +239,19 @@ function stopTimerIfIdle(year) {
 
 const app = express()
 
+// Local dev server (localhost:4061), reached directly rather than through a
+// reverse proxy. Leave trust proxy off so a client cannot rewrite req.ip,
+// req.protocol, or req.hostname with X-Forwarded-For / X-Forwarded-Proto /
+// X-Forwarded-Host. Those values are unused today; the setting is explicit so
+// a later change has to opt in.
+//
+// Express still depends on proxy-addr to implement that check. Versions before
+// 2.0.8 (CVE-2026-90711) treat a short-prefix IPv4-mapped IPv6 trust subnet
+// such as ::ffff:10.0.0.0/8, and any IPv6 subnet with zero leading bits such
+// as ::/1, as matching every IPv4 address. package.json overrides proxy-addr
+// to 2.0.8 so that misconfiguration cannot spoof the client address.
+app.set('trust proxy', false)
+
 app.get('/api/graph', (req, res) => {
   const year = String(req.query.year || '')
   res.json(ensureEntry(year).data)
