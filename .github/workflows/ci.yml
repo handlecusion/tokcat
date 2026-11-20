@@ -27,6 +27,9 @@ jobs:
       - name: TypeScript typecheck
         run: npx tsc --noEmit
 
+      - name: Proxy trust regression
+        run: npm run test:proxy-trust
+
       - name: Vite build
         run: npm run build
 
