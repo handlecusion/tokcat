@@ -6,11 +6,15 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "proxy-addr": "2.0.8"
+  },
   "scripts": {
     "dev": "node server.js",
     "dev:vite": "node server.js",
     "build": "vite build",
     "check:seo": "python3 scripts/check_seo.py",
+    "test:proxy-trust": "node --test server.proxy-trust.test.js",
     "render:landing": "remotion render remotion/index.ts TokcatLandingMotion docs/tokcat-landing-motion.mp4 --codec=h264 --crf=26 --overwrite",
     "preview": "vite preview --port 4061",
     "tauri": "tauri",
