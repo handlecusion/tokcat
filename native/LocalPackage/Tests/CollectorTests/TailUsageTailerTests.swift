@@ -210,6 +210,66 @@ private func grokLine(_ total: Int64, _ model: String?, _ tsMs: Int64) -> String
         #expect(await tailer.files[path]?.grokTurnEmitted == 0)
     }
 
+    // A subagent emits live from its own session file, and its parent's
+    // billed `turn_completed` includes the same usage. The parent's top-up
+    // must be reduced by what the child emitted — even when the parent's
+    // completion is read before the child's final growth.
+    @Test func grokTailCountsSubagentUsageOnce() async throws {
+        let root = try tailTempDir("grok-subagent")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ws = root.appendingPathComponent(".grok/sessions/%2Ftmp%2Fproject")
+        let parentDir = ws.appendingPathComponent("parent-1")
+        let childDir = ws.appendingPathComponent("child-1")
+        try FileManager.default.createDirectory(
+            at: parentDir.appendingPathComponent("subagents/child-1"),
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: childDir, withIntermediateDirectories: true)
+        let now = nowMs()
+        func completed(_ total: Int64, _ ts: Int64) -> String {
+            #"{"method":"_x.ai/session/update","params":{"update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":\#(total - 100),"outputTokens":100,"totalTokens":\#(total),"cachedReadTokens":\#(total / 2),"modelUsage":{"grok-4.7-build":{"totalTokens":\#(total)}}}},"_meta":{"agentTimestampMs":\#(ts)}}}"#
+        }
+        // Child: 2000 of context deltas, then 60_000 billed.
+        let childPath = childDir.appendingPathComponent("updates.jsonl").path
+        try [grokLine(2000, "grok-4.7", now - 5_000), completed(60_000, now - 4_000)]
+            .joined(separator: "\n").write(toFile: childPath, atomically: true, encoding: .utf8)
+        // Parent: 1000 of its own context, then 100_000 billed (60_000 child).
+        let parentPath = parentDir.appendingPathComponent("updates.jsonl").path
+        try [grokLine(1000, "grok-4.7", now - 6_000), completed(100_000, now - 3_000)]
+            .joined(separator: "\n").write(toFile: parentPath, atomically: true, encoding: .utf8)
+
+        let tailer = UsageTailer()
+        // Parent first: the child has not been read yet.
+        let size = UInt64(try FileManager.default
+            .attributesOfItem(atPath: parentPath)[.size] as! Int)
+        let added = await tailer.readGrowth(
+            path: parentPath, client: .grok, start: 0, end: size, mtimeMs: now)
+        #expect(added == 4)
+        var events = await tailer.eventsSnapshot()
+        #expect(events.reduce(Int64(0)) { $0 + $1.total } == 100_000)
+        #expect(await tailer.grokEmittedBySession["child-1"] == 60_000)
+        #expect(await tailer.grokEmittedBySession["parent-1"] == 40_000)
+
+        // The child's own file is already caught up: nothing is re-emitted.
+        let childSize = UInt64(try FileManager.default
+            .attributesOfItem(atPath: childPath)[.size] as! Int)
+        #expect(await tailer.files[childPath]?.offset == childSize)
+
+        // The child's next turn (a parent wake-up later) is offset against
+        // the parent's next billed turn as well.
+        let more = "\n" + completed(5_000, now - 2_000)
+        let child = try #require(FileHandle(forWritingAtPath: childPath))
+        try child.seekToEnd(); try child.write(contentsOf: Data(more.utf8)); try child.close()
+        let parentMore = "\n" + completed(7_000, now - 1_000)
+        let parent = try #require(FileHandle(forWritingAtPath: parentPath))
+        try parent.seekToEnd(); try parent.write(contentsOf: Data(parentMore.utf8)); try parent.close()
+        let size2 = UInt64(try FileManager.default
+            .attributesOfItem(atPath: parentPath)[.size] as! Int)
+        _ = await tailer.readGrowth(
+            path: parentPath, client: .grok, start: size, end: size2, mtimeMs: now)
+        events = await tailer.eventsSnapshot()
+        #expect(events.reduce(Int64(0)) { $0 + $1.total } == 107_000)
+    }
+
     // Codex tail path: last_token_usage only, cached subtracted from input,
     // model threaded from turn_context (usage_tail.rs:385-472). The
     // total_token_usage running counter must be ignored entirely — the tail

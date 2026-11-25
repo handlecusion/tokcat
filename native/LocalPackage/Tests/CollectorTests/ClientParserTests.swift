@@ -267,6 +267,54 @@ private func makeTempDir(_ name: String) throws -> URL {
             #expect(Set(messages.compactMap(\.dedupKey)).count == 2)
         }
     }
+
+    // A subagent runs as its own session, but the parent's billed
+    // `turn_completed` already includes its usage: the child must not be
+    // counted again. A legacy (context-delta) parent never included it, so
+    // that child stays.
+    @Test func billedParentRollsUpSubagentSessions() throws {
+        let root = try makeTempDir("grok-subagents")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ws = root.appendingPathComponent("sessions").appendingPathComponent("%2Ftmp%2Fproject")
+        func session(_ id: String, _ updates: String, children: [String] = []) throws {
+            let dir = ws.appendingPathComponent(id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try updates.write(
+                toFile: dir.appendingPathComponent("updates.jsonl").path,
+                atomically: true, encoding: .utf8)
+            for child in children {
+                let meta = dir.appendingPathComponent("subagents").appendingPathComponent(child)
+                try FileManager.default.createDirectory(at: meta, withIntermediateDirectories: true)
+                try #"{"child_session_id":"\#(child)","parent_session_id":"\#(id)"}"#.write(
+                    toFile: meta.appendingPathComponent("meta.json").path,
+                    atomically: true, encoding: .utf8)
+            }
+        }
+        func completed(_ id: String, _ total: Int, _ ticks: Int) -> String {
+            #"{"method":"_x.ai/session/update","params":{"sessionId":"\#(id)","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":\#(total - 10),"outputTokens":10,"totalTokens":\#(total),"costUsdTicks":\#(ticks),"modelUsage":{"grok-4.7-build":{"inputTokens":\#(total - 10),"outputTokens":10,"totalTokens":\#(total),"costUsdTicks":\#(ticks)}}}},"_meta":{"agentTimestampMs":1700000002000}}}"#
+        }
+        // Parent turn: 1000 billed, 600 of it from child-1.
+        try session("parent-1", completed("parent-1", 1000, 10_000_000_000), children: ["child-1"])
+        try session("child-1", completed("child-1", 600, 6_000_000_000))
+        // Legacy parent: context deltas only.
+        try session(
+            "legacy-1",
+            #"{"method":"session/update","params":{"sessionId":"legacy-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":400,"agentTimestampMs":1700000001000}}}"#,
+            children: ["child-2"])
+        try session("child-2", completed("child-2", 300, 3_000_000_000))
+
+        let paths = collectFiles(root.appendingPathComponent("sessions").path) {
+            rustFileName($0) == "updates.jsonl"
+        }
+        #expect(paths.count == 4)
+        let messages = parseGrokSessionFiles(paths)
+        let bySession = Dictionary(grouping: messages) {
+            $0.dedupKey?.split(separator: ":")[2].description ?? ""
+        }
+        #expect(Set(bySession.keys) == ["parent-1", "legacy-1", "child-2"])
+        #expect(messages.reduce(Int64(0)) { $0 + $1.totalTokens } == 1000 + 400 + 300)
+        #expect(abs(messages.reduce(0.0) { $0 + $1.cost } - 1.3) < 1e-9)
+    }
 }
 
 @Suite struct HermesParserTests {

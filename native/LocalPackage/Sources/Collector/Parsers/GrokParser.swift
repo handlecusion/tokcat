@@ -21,6 +21,14 @@ import Foundation
 // provisional input-only estimate for the turn still in flight. In that
 // legacy path, sibling `signals.json` may report totals that include
 // compaction history; any remainder is reconciled as a separate message.
+//
+// Subagents: a spawned subagent runs as its own session (with its own
+// `updates.jsonl` and `turn_completed` usage), and the parent lists it under
+// `<parent-session>/subagents/<child-session-id>/`. The parent's billed
+// `turn_completed` usage already rolls the child's usage in (model calls,
+// tokens and cost add up exactly), so counting both double-counts every
+// subagent. Children of a billed parent are therefore skipped; the parent's
+// turn carries them.
 
 enum GrokParser: UsageParser {
     static let clientName = "grok"
@@ -29,8 +37,50 @@ enum GrokParser: UsageParser {
         guard let home = grokHome() else { return [] }
         let sessions = joinPath(home, "sessions")
         guard isDirectory(sessions) else { return [] }
-        return collectFiles(sessions) { rustFileName($0) == "updates.jsonl" }
-            .flatMap(parseGrokUpdatesFile)
+        return parseGrokSessionFiles(
+            collectFiles(sessions) { rustFileName($0) == "updates.jsonl" })
+    }
+}
+
+/// Parse every session's `updates.jsonl`, dropping subagent sessions whose
+/// usage their parent's billed turns already include.
+func parseGrokSessionFiles(_ paths: [String]) -> [UsageMessage] {
+    var parsed: [(sessionId: String?, messages: [UsageMessage])] = []
+    var rolledUp = Set<String>()
+    for path in paths {
+        let result = parseGrokUpdatesFileDetailed(path)
+        let sessionDir = parentPath(path)
+        parsed.append((sessionDir.flatMap(rustFileName), result.messages))
+        // Only billed turns roll children up; a legacy context-delta parent
+        // never counted them, so its children stay.
+        if result.billed, let dir = sessionDir {
+            rolledUp.formUnion(grokSubagentSessionIds(dir))
+        }
+    }
+    return parsed.flatMap { entry -> [UsageMessage] in
+        if let id = entry.sessionId, rolledUp.contains(id) { return [] }
+        return entry.messages
+    }
+}
+
+/// Session ids of the subagents a Grok session spawned: the entries of its
+/// `subagents/` directory (`meta.json` `child_session_id`, else the
+/// directory name).
+func grokSubagentSessionIds(_ sessionDir: String) -> [String] {
+    let dir = joinPath(sessionDir, "subagents")
+    guard isDirectory(dir),
+        let names = try? FileManager.default.contentsOfDirectory(atPath: dir)
+    else { return [] }
+    return names.sorted().compactMap { name -> String? in
+        let entry = joinPath(dir, name)
+        guard isDirectory(entry) else { return nil }
+        if let data = FileManager.default.contents(atPath: joinPath(entry, "meta.json")),
+            let child = JSONValue.parse(data)?["child_session_id"]?.asString,
+            !rustTrim(child).isEmpty
+        {
+            return child
+        }
+        return name
     }
 }
 
@@ -97,10 +147,16 @@ struct GrokActiveTurn {
 /// high-water-mark delta between user_message_chunk boundaries; dips never
 /// lower the mark; a whole-file aggregate stands in when no turns emerged.
 func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
-    guard rustFileName(path) == "updates.jsonl" else { return [] }
+    parseGrokUpdatesFileDetailed(path).messages
+}
+
+/// `billed`: the file has `turn_completed` usage, so its messages come from
+/// billed turns (which include any subagents' usage).
+func parseGrokUpdatesFileDetailed(_ path: String) -> (messages: [UsageMessage], billed: Bool) {
+    guard rustFileName(path) == "updates.jsonl" else { return ([], false) }
 
     let metadata = readGrokMetadata(path)
-    guard let data = FileManager.default.contents(atPath: path) else { return [] }
+    guard let data = FileManager.default.contents(atPath: path) else { return ([], false) }
 
     var messages: [UsageMessage] = []
     var billedMessages: [UsageMessage] = []
@@ -193,7 +249,7 @@ func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
                 billedMessages.append(message)
             }
         }
-        return billedMessages
+        return (billedMessages, true)
     }
 
     if let turn = activeTurn {
@@ -218,7 +274,7 @@ func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
     appendGrokSignalsReconciliation(
         updatesPath: path, metadata: metadata, messages: &messages,
         fallbackModel: currentModel)
-    return messages
+    return (messages, false)
 }
 
 /// Port of read_grok_metadata (usage_graph.rs:1824-1864): metadata ladder
