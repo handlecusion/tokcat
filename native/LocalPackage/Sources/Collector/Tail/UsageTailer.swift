@@ -136,6 +136,9 @@ struct TailFileState {
     // occasional modelId tags; keep the high-water total and last model.
     var grokLastTotal: Int64?
     var grokModel: String?
+    /// Context-delta tokens already emitted for the Grok turn in flight;
+    /// its `turn_completed` billed total only adds the remainder.
+    var grokTurnEmitted: Int64 = 0
 
     static func atEOF(size: UInt64, mtimeMs: Int64) -> TailFileState {
         TailFileState(offset: size, mtimeMs: mtimeMs,
@@ -362,6 +365,7 @@ public actor UsageTailer {
         var codexModel = files[path]?.codexModel
         var grokLastTotal = files[path]?.grokLastTotal
         var grokModel = files[path]?.grokModel
+        var grokTurnEmitted = files[path]?.grokTurnEmitted ?? 0
 
         var consumed: UInt64 = 0
         for chunk in splitInclusiveNewline(buf) {
@@ -390,6 +394,7 @@ public actor UsageTailer {
             case .grok:
                 recorded = parseGrokLine(raw: trimmed, lastTotal: &grokLastTotal,
                                          currentModel: &grokModel,
+                                         turnEmitted: &grokTurnEmitted,
                                          emitFirstAsDelta: grokEmitFirst)
             case .omp:
                 recorded = parseOmpLine(path: path, raw: trimmed)
@@ -402,7 +407,8 @@ public actor UsageTailer {
 
         files[path] = TailFileState(
             offset: start + consumed, mtimeMs: mtimeMs,
-            codexModel: codexModel, grokLastTotal: grokLastTotal, grokModel: grokModel)
+            codexModel: codexModel, grokLastTotal: grokLastTotal, grokModel: grokModel,
+            grokTurnEmitted: grokTurnEmitted)
         return added
     }
 
@@ -495,6 +501,12 @@ public actor UsageTailer {
     /// Grok Build updates.jsonl: cumulative `totalTokens` with no input/
     /// output split. Emit positive deltas as input tokens.
     ///
+    /// That counter is only the context-window size, so it badly
+    /// under-counts agentic turns. When the turn's `turn_completed`
+    /// notification lands, its billed usage tops the turn up: the remainder
+    /// over what context deltas already emitted (`turnEmitted`) is pushed
+    /// as one event, so the live rate converges on billed tokens.
+    ///
     /// `emitFirstAsDelta`: when true (full-file read from offset 0), the
     /// first observed total is treated as a delta from 0 so brand-new
     /// sessions contribute. When false (mid-file attach after EOF baseline),
@@ -504,11 +516,36 @@ public actor UsageTailer {
     /// high-water `lastTotal`, so recovering values are not double-counted.
     private func parseGrokLine(raw: [UInt8], lastTotal: inout Int64?,
                                currentModel: inout String?,
+                               turnEmitted: inout Int64,
                                emitFirstAsDelta: Bool) -> Bool {
         guard let value = JSONValue.parse(Data(raw)) else { return false }
 
         if let model = tailExtractGrokModelId(value) {
             currentModel = tailNormalizeModel(model)
+        }
+
+        if let usage = grokTurnCompletedUsage(value) {
+            let alreadyEmitted = turnEmitted
+            turnEmitted = 0
+            let billed = grokUsageTokens(usage)
+            var remainder = satSub(billed.total, alreadyEmitted)
+            if remainder <= 0 { return false }
+            // Fill the remainder cache-first, then output, then input so the
+            // event never claims more of a bucket than the turn billed.
+            let cacheRead = min(billed.cacheRead, remainder)
+            remainder -= cacheRead
+            let output = min(satAdd(billed.output, billed.reasoning), remainder)
+            remainder -= output
+            let cacheWrite = min(billed.cacheWrite, remainder)
+            remainder -= cacheWrite
+            let model = usage["modelUsage"]?.asObject?.keys.sorted().first
+                .map(tailNormalizeModel) ?? currentModel ?? "unknown"
+            return pushEvent(
+                UsageEvent(tsMs: tailExtractGrokTimestampMs(value) ?? now(),
+                           client: tailClientGrok, agent: "main", model: model,
+                           input: remainder, output: output,
+                           cacheRead: cacheRead, cacheWrite: cacheWrite),
+                dedupKey: "")
         }
 
         guard let total = tailExtractGrokTotalTokens(value), total >= 0 else { return false }
@@ -525,6 +562,7 @@ public actor UsageTailer {
         if total <= previous { return false }
         let delta = total - previous
         lastTotal = total
+        turnEmitted = satAdd(turnEmitted, delta)
 
         let tsMs = tailExtractGrokTimestampMs(value) ?? now()
         let model = currentModel ?? "unknown"

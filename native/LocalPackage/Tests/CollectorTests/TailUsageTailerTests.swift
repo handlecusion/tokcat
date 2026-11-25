@@ -172,6 +172,44 @@ private func grokLine(_ total: Int64, _ model: String?, _ tsMs: Int64) -> String
         #expect(await tailer.files[path3]?.grokLastTotal == 520)
     }
 
+    // `turn_completed` tops the turn up to its billed usage: only the
+    // remainder over the context deltas already emitted is pushed.
+    @Test func grokTailTopsUpTurnToBilledUsage() async throws {
+        let path = tailTempFile("grok-billed")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let now = nowMs()
+        let completed = """
+        {"method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":50000,"outputTokens":2000,"totalTokens":52000,"cachedReadTokens":40000,"reasoningTokens":500,"modelUsage":{"grok-4.7-build":{"inputTokens":50000,"outputTokens":2000,"totalTokens":52000}}}},"_meta":{"agentTimestampMs":\(now - 1_000)}}}
+        """
+        let lines = [
+            grokLine(1000, "grok-4.7", now - 3_000),
+            grokLine(3000, nil, now - 2_000),
+            completed,
+            // A second turn_completed with nothing emitted in between adds
+            // its full billed total.
+            completed,
+        ].joined(separator: "\n")
+        try lines.write(toFile: path, atomically: true, encoding: .utf8)
+
+        let tailer = UsageTailer()
+        let size = UInt64(try FileManager.default
+            .attributesOfItem(atPath: path)[.size] as! Int)
+        let added = await tailer.readGrowth(
+            path: path, client: .grok, start: 0, end: size, mtimeMs: now)
+        #expect(added == 4)
+        let events = await tailer.eventsSnapshot()
+        #expect(events.count == 4)
+        // 1000 + 2000 context deltas, then 52000 - 3000 remainder.
+        #expect(events[2].total == 49_000)
+        #expect(events[2].cacheRead == 40_000)
+        #expect(events[2].output == 2_000)
+        #expect(events[2].input == 7_000)
+        #expect(events[2].model == "grok-4.7-build")
+        #expect(events[3].total == 52_000)
+        #expect(events.reduce(Int64(0)) { $0 + $1.total } == 104_000)
+        #expect(await tailer.files[path]?.grokTurnEmitted == 0)
+    }
+
     // Codex tail path: last_token_usage only, cached subtracted from input,
     // model threaded from turn_context (usage_tail.rs:385-472). The
     // total_token_usage running counter must be ignored entirely — the tail

@@ -5,11 +5,22 @@ import Foundation
 //
 // Grok writes JSON-RPC session updates under
 // `$GROK_HOME/sessions/<urlencoded-workspace>/<session-id>/updates.jsonl`
-// (default home: `~/.grok`). Logs expose a cumulative `totalTokens` counter
-// without a stable input/output split, so per-turn positive total-token
-// deltas are recorded as INPUT tokens. Sibling `signals.json` may report
-// totals that include compaction history; any remainder is reconciled as a
-// separate message so compacted sessions are not under-counted.
+// (default home: `~/.grok`).
+//
+// Primary source: every finished turn (user prompts and background
+// task/subagent completions alike) ends with an
+// `_x.ai/session/update` / `turn_completed` notification whose `usage` is
+// the billed per-turn total — input (cached reads included), output
+// (reasoning included), per-model split and `costUsdTicks`. It matches the
+// session's `usage.json` turn ledger exactly.
+//
+// The `_meta.totalTokens` counter on ordinary updates is only the current
+// context-window size: it ignores that every model call re-sends the whole
+// context, so it under-counts agentic turns by 20-30x. It is kept as a
+// fallback for logs without `turn_completed` (older Grok Build) and as a
+// provisional input-only estimate for the turn still in flight. In that
+// legacy path, sibling `signals.json` may report totals that include
+// compaction history; any remainder is reconciled as a separate message.
 
 enum GrokParser: UsageParser {
     static let clientName = "grok"
@@ -92,6 +103,8 @@ func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
     guard let data = FileManager.default.contents(atPath: path) else { return [] }
 
     var messages: [UsageMessage] = []
+    var billedMessages: [UsageMessage] = []
+    var completedTurns = 0
     var currentModel = metadata.modelId ?? grokUnknownModel
     var lastTotal: Int64?
     var lastTotalTimestamp = metadata.timestampMs
@@ -111,6 +124,17 @@ func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
         }
 
         let timestamp = extractGrokTimestampMs(value) ?? metadata.timestampMs
+        if let usage = grokTurnCompletedUsage(value) {
+            billedMessages.append(
+                contentsOf: grokBilledTurnMessages(
+                    usage, metadata: metadata, turn: completedTurns,
+                    timestampMs: timestamp, fallbackModel: currentModel))
+            completedTurns += 1
+            // The billed record supersedes the context-delta estimate for
+            // the turn it closes.
+            activeTurn = nil
+            continue
+        }
         if isGrokUserMessageChunk(value) {
             if let turn = activeTurn {
                 activeTurn = nil
@@ -154,6 +178,22 @@ func parseGrokUpdatesFile(_ path: String) -> [UsageMessage] {
             lastTotalTimestamp = timestamp
             lastTotal = totalTokens
         }
+    }
+
+    if completedTurns > 0 {
+        // Billed path. A turn still streaming has no `turn_completed` yet;
+        // surface its context growth provisionally so long-running agentic
+        // turns are not invisible until they finish. The next rescan after
+        // completion replaces it with the billed record.
+        if var turn = activeTurn {
+            turn.turnIndex = completedTurns
+            if var message = turn.intoMessage(metadata) {
+                message.dedupKey =
+                    "grok:\(metadata.workspaceKey):\(metadata.sessionId):inflight:\(completedTurns)"
+                billedMessages.append(message)
+            }
+        }
+        return billedMessages
     }
 
     if let turn = activeTurn {
@@ -400,6 +440,70 @@ func extractGrokTimestampMs(_ value: JSONValue) -> Int64? {
         }
     }
     return nil
+}
+
+/// `usage` of an `_x.ai/session/update` `turn_completed` notification.
+func grokTurnCompletedUsage(_ value: JSONValue) -> JSONValue? {
+    guard jsonPath(value, ["params", "update", "sessionUpdate"])?.asString == "turn_completed",
+        let usage = jsonPath(value, ["params", "update", "usage"]),
+        usage.asObject != nil
+    else { return nil }
+    return usage
+}
+
+/// Grok's usage counters overlap: `inputTokens` includes cached reads (and
+/// cache writes), `outputTokens` includes reasoning, and
+/// `totalTokens == inputTokens + outputTokens`. Split them into tokcat's
+/// disjoint buckets so the breakdown sums back to Grok's own total.
+func grokUsageTokens(_ usage: JSONValue) -> TokenBreakdown {
+    let input = nonNegativeI64(usage["inputTokens"])
+    let cacheRead = min(nonNegativeI64(usage["cachedReadTokens"]), input)
+    let cacheWrite = min(nonNegativeI64(usage["cacheCreationTokens"]), input - cacheRead)
+    let output = nonNegativeI64(usage["outputTokens"])
+    let reasoning = min(nonNegativeI64(usage["reasoningTokens"]), output)
+    return TokenBreakdown(
+        input: input - cacheRead - cacheWrite,
+        output: output - reasoning,
+        cacheRead: cacheRead,
+        cacheWrite: cacheWrite,
+        reasoning: reasoning)
+}
+
+/// `costUsdTicks` is xAI's billed cost in 1e-10 USD.
+func grokUsageCostUsd(_ usage: JSONValue) -> Double {
+    Double(nonNegativeI64(usage["costUsdTicks"])) / 10_000_000_000.0
+}
+
+/// One message per model in a `turn_completed` usage record (falling back
+/// to the turn-level totals when `modelUsage` is absent).
+func grokBilledTurnMessages(
+    _ usage: JSONValue, metadata: GrokMetadata, turn: Int, timestampMs: Int64,
+    fallbackModel: String
+) -> [UsageMessage] {
+    var parts: [(model: String, usage: JSONValue)] = []
+    if let models = usage["modelUsage"]?.asObject {
+        for model in models.keys.sorted() {
+            guard let modelUsage = models[model], modelUsage.asObject != nil else { continue }
+            parts.append((model, modelUsage))
+        }
+    }
+    if parts.isEmpty {
+        parts = [(fallbackModel, usage)]
+    }
+    return parts.compactMap { part in
+        let tokens = grokUsageTokens(part.usage)
+        if tokens.total <= 0 { return nil }
+        let model = rustTrim(part.model).isEmpty ? grokUnknownModel : part.model
+        var msg = UsageMessage(
+            client: "grok", modelId: model, providerId: "xai",
+            timestampMs: timestampMs, tokens: tokens,
+            cost: grokUsageCostUsd(part.usage))
+        let calls = i64Value(part.usage["modelCalls"]) ?? 1
+        msg.messages = Int32(clamping: max(calls, 1))
+        msg.dedupKey =
+            "grok:\(metadata.workspaceKey):\(metadata.sessionId):turn:\(turn):\(msg.modelId)"
+        return msg
+    }
 }
 
 /// Port of is_grok_user_message_chunk (usage_graph.rs:2071-2074).
