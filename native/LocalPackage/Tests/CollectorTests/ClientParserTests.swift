@@ -190,6 +190,131 @@ private func makeTempDir(_ name: String) throws -> URL {
             #expect(messages.first?.tokens.input == 90)
         }
     }
+
+    // Grok Build's `turn_completed` notification carries the billed per-turn
+    // usage; it must replace the context-window `totalTokens` deltas, which
+    // ignore that every model call re-sends the whole context.
+    @Test func turnCompletedUsageSupersedesContextDeltas() throws {
+        try withGrokFixture(
+            "turn-completed",
+            updates: """
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.7"}}},"_meta":{"agentTimestampMs":1700000000000}}}
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":1000,"agentTimestampMs":1700000001000}}}
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":3000,"agentTimestampMs":1700000002000}}}
+                {"timestamp":1700000003,"method":"_x.ai/session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"turn_completed","prompt_id":"p1","stop_reason":"end_turn","usage":{"inputTokens":50000,"outputTokens":2000,"totalTokens":52000,"cachedReadTokens":40000,"cacheCreationTokens":0,"reasoningTokens":500,"modelCalls":7,"costUsdTicks":1000000000,"modelUsage":{"grok-4.7-build":{"inputTokens":50000,"outputTokens":2000,"totalTokens":52000,"cachedReadTokens":40000,"cacheCreationTokens":0,"reasoningTokens":500,"modelCalls":7,"costUsdTicks":1000000000}}}},"_meta":{"agentTimestampMs":1700000003000}}}
+                """,
+            // Compaction history must not be reconciled on top of billed usage.
+            signals:
+                #"{"primaryModelId":"grok-4.7","totalTokensBeforeCompaction":9000000,"contextTokensUsed":3000}"#
+        ) { path in
+            let messages = parseGrokUpdatesFile(path)
+            #expect(messages.count == 1)
+            let msg = messages[0]
+            #expect(msg.modelId == "grok-4.7-build")
+            #expect(msg.tokens.input == 10_000)
+            #expect(msg.tokens.cacheRead == 40_000)
+            #expect(msg.tokens.output == 1_500)
+            #expect(msg.tokens.reasoning == 500)
+            #expect(msg.tokens.cacheWrite == 0)
+            #expect(msg.totalTokens == 52_000)
+            #expect(abs(msg.cost - 0.1) < 1e-12)
+            #expect(msg.messages == 7)
+            #expect(msg.timestampMs == 1_700_000_003_000)
+            #expect(msg.dedupKey == "grok:%2Ftmp%2Fproject:session-1:turn:0:grok-4.7-build")
+
+            // Billed cost survives the pricing pass (not re-estimated).
+            let priced = UsageGraph.priceMessages(messages)
+            #expect(priced.count == 1)
+            #expect(abs(priced[0].cost - 0.1) < 1e-12)
+        }
+    }
+
+    // A turn still streaming has no `turn_completed` yet: it shows up as a
+    // provisional context-delta estimate next to the billed turns.
+    @Test func inFlightTurnAfterBilledTurnsIsProvisional() throws {
+        try withGrokFixture(
+            "in-flight",
+            updates: """
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk"},"_meta":{"agentTimestampMs":1700000000000}}}
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":1000,"agentTimestampMs":1700000001000}}}
+                {"method":"_x.ai/session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":5000,"outputTokens":100,"totalTokens":5100,"cachedReadTokens":4000,"modelCalls":2,"costUsdTicks":0}},"_meta":{"agentTimestampMs":1700000002000}}}
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","_meta":{"modelId":"grok-4.7"}}},"_meta":{"agentTimestampMs":1700000010000}}}
+                {"method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":1800,"agentTimestampMs":1700000011000}}}
+                """
+        ) { path in
+            let messages = parseGrokUpdatesFile(path)
+            #expect(messages.count == 2)
+            // No modelUsage: falls back to the turn totals + current model.
+            #expect(messages[0].modelId == grokUnknownModel)
+            #expect(messages[0].totalTokens == 5_100)
+            #expect(messages[0].cost == 0)
+            #expect(messages[1].tokens.input == 800)
+            #expect(messages[1].modelId == "grok-4.7")
+            #expect(messages[1].dedupKey == "grok:%2Ftmp%2Fproject:session-1:inflight:1")
+        }
+    }
+
+    @Test func turnCompletedSplitsPerModel() throws {
+        try withGrokFixture(
+            "per-model",
+            updates: """
+                {"method":"_x.ai/session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":300,"outputTokens":30,"totalTokens":330,"modelUsage":{"grok-4.7-build":{"inputTokens":200,"outputTokens":20,"totalTokens":220,"modelCalls":2},"grok-4.6":{"inputTokens":100,"outputTokens":10,"totalTokens":110,"modelCalls":1}}}},"_meta":{"agentTimestampMs":1700000002000}}}
+                """
+        ) { path in
+            let messages = parseGrokUpdatesFile(path)
+            #expect(messages.map(\.modelId) == ["grok-4.6", "grok-4.7-build"])
+            #expect(messages.map(\.totalTokens) == [110, 220])
+            #expect(Set(messages.compactMap(\.dedupKey)).count == 2)
+        }
+    }
+
+    // A subagent runs as its own session, but the parent's billed
+    // `turn_completed` already includes its usage: the child must not be
+    // counted again. A legacy (context-delta) parent never included it, so
+    // that child stays.
+    @Test func billedParentRollsUpSubagentSessions() throws {
+        let root = try makeTempDir("grok-subagents")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ws = root.appendingPathComponent("sessions").appendingPathComponent("%2Ftmp%2Fproject")
+        func session(_ id: String, _ updates: String, children: [String] = []) throws {
+            let dir = ws.appendingPathComponent(id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try updates.write(
+                toFile: dir.appendingPathComponent("updates.jsonl").path,
+                atomically: true, encoding: .utf8)
+            for child in children {
+                let meta = dir.appendingPathComponent("subagents").appendingPathComponent(child)
+                try FileManager.default.createDirectory(at: meta, withIntermediateDirectories: true)
+                try #"{"child_session_id":"\#(child)","parent_session_id":"\#(id)"}"#.write(
+                    toFile: meta.appendingPathComponent("meta.json").path,
+                    atomically: true, encoding: .utf8)
+            }
+        }
+        func completed(_ id: String, _ total: Int, _ ticks: Int) -> String {
+            #"{"method":"_x.ai/session/update","params":{"sessionId":"\#(id)","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":\#(total - 10),"outputTokens":10,"totalTokens":\#(total),"costUsdTicks":\#(ticks),"modelUsage":{"grok-4.7-build":{"inputTokens":\#(total - 10),"outputTokens":10,"totalTokens":\#(total),"costUsdTicks":\#(ticks)}}}},"_meta":{"agentTimestampMs":1700000002000}}}"#
+        }
+        // Parent turn: 1000 billed, 600 of it from child-1.
+        try session("parent-1", completed("parent-1", 1000, 10_000_000_000), children: ["child-1"])
+        try session("child-1", completed("child-1", 600, 6_000_000_000))
+        // Legacy parent: context deltas only.
+        try session(
+            "legacy-1",
+            #"{"method":"session/update","params":{"sessionId":"legacy-1","update":{"sessionUpdate":"agent_message_chunk"},"_meta":{"totalTokens":400,"agentTimestampMs":1700000001000}}}"#,
+            children: ["child-2"])
+        try session("child-2", completed("child-2", 300, 3_000_000_000))
+
+        let paths = collectFiles(root.appendingPathComponent("sessions").path) {
+            rustFileName($0) == "updates.jsonl"
+        }
+        #expect(paths.count == 4)
+        let messages = parseGrokSessionFiles(paths)
+        let bySession = Dictionary(grouping: messages) {
+            $0.dedupKey?.split(separator: ":")[2].description ?? ""
+        }
+        #expect(Set(bySession.keys) == ["parent-1", "legacy-1", "child-2"])
+        #expect(messages.reduce(Int64(0)) { $0 + $1.totalTokens } == 1000 + 400 + 300)
+        #expect(abs(messages.reduce(0.0) { $0 + $1.cost } - 1.3) < 1e-9)
+    }
 }
 
 @Suite struct HermesParserTests {

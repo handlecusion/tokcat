@@ -136,6 +136,12 @@ struct TailFileState {
     // occasional modelId tags; keep the high-water total and last model.
     var grokLastTotal: Int64?
     var grokModel: String?
+    /// Context-delta tokens already emitted for the Grok turn in flight;
+    /// its `turn_completed` billed total only adds the remainder.
+    var grokTurnEmitted: Int64 = 0
+    /// Subagent tokens already emitted from the children's own files that
+    /// exceeded the turn they were offset against; carried to the next turn.
+    var grokSubagentCarry: Int64 = 0
 
     static func atEOF(size: UInt64, mtimeMs: Int64) -> TailFileState {
         TailFileState(offset: size, mtimeMs: mtimeMs,
@@ -187,6 +193,14 @@ public actor UsageTailer {
     var activeFiles: [String: TailClientKind] = [:]  // internal for tests
     private var lastFullScanMs: Int64 = 0
     private let config: UsageTailerConfig
+    /// Grok subagent accounting, keyed by session id (the session dir name).
+    /// A parent's billed `turn_completed` includes its subagents' usage, which
+    /// the children's own files also emit live, so the parent's top-up is
+    /// reduced by what its children emitted (`grokEmittedBySession`) and not
+    /// yet offset (`grokCreditedBySession`).
+    var grokEmittedBySession: [String: Int64] = [:]  // internal for tests
+    private var grokCreditedBySession: [String: Int64] = [:]
+    private var grokPathBySession: [String: String] = [:]
 
     public init(config: UsageTailerConfig = UsageTailerConfig()) {
         self.config = config
@@ -362,6 +376,10 @@ public actor UsageTailer {
         var codexModel = files[path]?.codexModel
         var grokLastTotal = files[path]?.grokLastTotal
         var grokModel = files[path]?.grokModel
+        var grokTurnEmitted = files[path]?.grokTurnEmitted ?? 0
+        var grokSubagentCarry = files[path]?.grokSubagentCarry ?? 0
+        let grokSession = client == .grok ? grokSessionId(path) : nil
+        if let grokSession { grokPathBySession[grokSession] = path }
 
         var consumed: UInt64 = 0
         for chunk in splitInclusiveNewline(buf) {
@@ -388,9 +406,15 @@ public actor UsageTailer {
             case .codex:
                 recorded = parseCodexLine(raw: trimmed, codexModel: &codexModel)
             case .grok:
-                recorded = parseGrokLine(raw: trimmed, lastTotal: &grokLastTotal,
+                var catchUpAdded = 0
+                recorded = parseGrokLine(path: path, session: grokSession,
+                                         raw: trimmed, lastTotal: &grokLastTotal,
                                          currentModel: &grokModel,
+                                         turnEmitted: &grokTurnEmitted,
+                                         subagentCarry: &grokSubagentCarry,
+                                         catchUpAdded: &catchUpAdded,
                                          emitFirstAsDelta: grokEmitFirst)
+                added += catchUpAdded
             case .omp:
                 recorded = parseOmpLine(path: path, raw: trimmed)
             case .aside:
@@ -402,7 +426,8 @@ public actor UsageTailer {
 
         files[path] = TailFileState(
             offset: start + consumed, mtimeMs: mtimeMs,
-            codexModel: codexModel, grokLastTotal: grokLastTotal, grokModel: grokModel)
+            codexModel: codexModel, grokLastTotal: grokLastTotal, grokModel: grokModel,
+            grokTurnEmitted: grokTurnEmitted, grokSubagentCarry: grokSubagentCarry)
         return added
     }
 
@@ -495,6 +520,17 @@ public actor UsageTailer {
     /// Grok Build updates.jsonl: cumulative `totalTokens` with no input/
     /// output split. Emit positive deltas as input tokens.
     ///
+    /// That counter is only the context-window size, so it badly
+    /// under-counts agentic turns. When the turn's `turn_completed`
+    /// notification lands, its billed usage tops the turn up: the remainder
+    /// over what context deltas already emitted (`turnEmitted`) is pushed
+    /// as one event, so the live rate converges on billed tokens.
+    ///
+    /// Subagents run as their own sessions and emit live from their own
+    /// files, but the parent's billed usage already includes them. The
+    /// parent's top-up is reduced by what its children emitted, so each
+    /// subagent token is counted once, as it happens, in the child's file.
+    ///
     /// `emitFirstAsDelta`: when true (full-file read from offset 0), the
     /// first observed total is treated as a delta from 0 so brand-new
     /// sessions contribute. When false (mid-file attach after EOF baseline),
@@ -502,13 +538,46 @@ public actor UsageTailer {
     ///
     /// Decreasing totals (stream rewinds) are ignored without lowering the
     /// high-water `lastTotal`, so recovering values are not double-counted.
-    private func parseGrokLine(raw: [UInt8], lastTotal: inout Int64?,
+    private func parseGrokLine(path: String, session: String?,
+                               raw: [UInt8], lastTotal: inout Int64?,
                                currentModel: inout String?,
+                               turnEmitted: inout Int64,
+                               subagentCarry: inout Int64,
+                               catchUpAdded: inout Int,
                                emitFirstAsDelta: Bool) -> Bool {
         guard let value = JSONValue.parse(Data(raw)) else { return false }
 
         if let model = tailExtractGrokModelId(value) {
             currentModel = tailNormalizeModel(model)
+        }
+
+        if let usage = grokTurnCompletedUsage(value) {
+            let alreadyEmitted = turnEmitted
+            turnEmitted = 0
+            let billed = grokUsageTokens(usage)
+            let available = max(satSub(billed.total, alreadyEmitted), 0)
+            let credit = takeGrokSubagentCredit(sessionPath: path, added: &catchUpAdded)
+            let owed = satAdd(subagentCarry, credit)
+            let offset = min(owed, available)
+            subagentCarry = owed - offset
+            var remainder = available - offset
+            if remainder <= 0 { return false }
+            // Fill the remainder cache-first, then output, then input so the
+            // event never claims more of a bucket than the turn billed.
+            let cacheRead = min(billed.cacheRead, remainder)
+            remainder -= cacheRead
+            let output = min(satAdd(billed.output, billed.reasoning), remainder)
+            remainder -= output
+            let cacheWrite = min(billed.cacheWrite, remainder)
+            remainder -= cacheWrite
+            let model = usage["modelUsage"]?.asObject?.keys.sorted().first
+                .map(tailNormalizeModel) ?? currentModel ?? "unknown"
+            return pushGrokEvent(
+                UsageEvent(tsMs: tailExtractGrokTimestampMs(value) ?? now(),
+                           client: tailClientGrok, agent: "main", model: model,
+                           input: remainder, output: output,
+                           cacheRead: cacheRead, cacheWrite: cacheWrite),
+                session: session)
         }
 
         guard let total = tailExtractGrokTotalTokens(value), total >= 0 else { return false }
@@ -525,14 +594,59 @@ public actor UsageTailer {
         if total <= previous { return false }
         let delta = total - previous
         lastTotal = total
+        turnEmitted = satAdd(turnEmitted, delta)
 
         let tsMs = tailExtractGrokTimestampMs(value) ?? now()
         let model = currentModel ?? "unknown"
 
-        return pushEvent(
+        return pushGrokEvent(
             UsageEvent(tsMs: tsMs, client: tailClientGrok, agent: "main", model: model,
                        input: delta, output: 0, cacheRead: 0, cacheWrite: 0),
-            dedupKey: "")
+            session: session)
+    }
+
+    private func pushGrokEvent(_ event: UsageEvent, session: String?) -> Bool {
+        if let session {
+            grokEmittedBySession[session] = satAdd(
+                grokEmittedBySession[session] ?? 0, event.total)
+        }
+        return pushEvent(event, dedupKey: "")
+    }
+
+    /// Tokens this session's subagents emitted from their own files that no
+    /// turn of this session has offset yet. Children are caught up first, so
+    /// a child's last growth that the walk would only reach later in this
+    /// tick is not missed.
+    private func takeGrokSubagentCredit(sessionPath path: String, added: inout Int) -> Int64 {
+        guard let sessionDir = parentPath(path) else { return 0 }
+        let children = grokSubagentSessionIds(sessionDir)
+        if children.isEmpty { return 0 }
+        let workspaceDir = parentPath(sessionDir)
+        var credit: Int64 = 0
+        for child in children {
+            let childPath = grokPathBySession[child]
+                ?? workspaceDir.map { joinPath(joinPath($0, child), "updates.jsonl") }
+            if let childPath, childPath != path {
+                added += catchUpGrokFile(childPath)
+            }
+            let emitted = grokEmittedBySession[child] ?? 0
+            let credited = grokCreditedBySession[child] ?? 0
+            if emitted > credited {
+                credit = satAdd(credit, emitted - credited)
+                grokCreditedBySession[child] = emitted
+            }
+        }
+        return credit
+    }
+
+    private func catchUpGrokFile(_ path: String) -> Int {
+        var sb = stat()
+        guard lstat(path, &sb) == 0, (sb.st_mode & S_IFMT) == S_IFREG else { return 0 }
+        let nowMs = now()
+        return processFile(
+            path: path, client: .grok, size: UInt64(max(sb.st_size, 0)),
+            mtimeMs: statMtimeMs(sb), isCold: false,
+            coldCutoffMs: nowMs - coldScanLookbackSecs * 1000, nowMs: nowMs)
     }
 
     // MARK: - oh-my-pi lines
@@ -874,6 +988,11 @@ public actor UsageTailer {
         let p = joinPath(joinPath(home, ".hermes"), "state.db")
         return isFile(p) ? p : nil
     }
+}
+
+/// `sessions/<workspace>/<session-id>/updates.jsonl` -> `<session-id>`.
+func grokSessionId(_ path: String) -> String? {
+    parentPath(path).flatMap(rustFileName)
 }
 
 private func tailGrokSessionsRoot() -> String? {
