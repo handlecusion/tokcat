@@ -262,17 +262,18 @@ jobs:
             desc "AI token usage monitor for the macOS menu bar"
             homepage "https://github.com/${GITHUB_REPOSITORY}"
 
-            depends_on macos: ">= :ventura"
+            depends_on macos: :ventura
 
             app "Tokcat.app"
 
-            postflight do
-              system_command "/usr/bin/xattr",
-                             args: ["-dr", "com.apple.quarantine", "#{appdir}/Tokcat.app"],
-                             sudo: false
-              system_command "/usr/bin/codesign",
-                             args: ["--force", "--deep", "--sign", "-", "#{appdir}/Tokcat.app"],
-                             sudo: false
+            postflight_steps do
+              run "/usr/bin/xattr",
+                  args: ["-dr", "com.apple.quarantine", "{{appdir}}/Tokcat.app"],
+                  sudo: false
+
+              run "/usr/bin/codesign",
+                  args: ["--force", "--deep", "--sign", "-", "{{appdir}}/Tokcat.app"],
+                  sudo: false
             end
 
             zap trash: [
